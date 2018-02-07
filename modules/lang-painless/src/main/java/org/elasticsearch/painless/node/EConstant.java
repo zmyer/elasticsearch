@@ -19,77 +19,77 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Sort;
-import org.elasticsearch.painless.Variables;
+import org.elasticsearch.painless.Globals;
+import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
 
+import java.util.Set;
+
 /**
- * Respresents a constant.  Note this replaces any other expression
- * node with a constant value set during a cast.  (Internal only.)
+ * Represents a constant inserted into the tree replacing
+ * other constants during constant folding.  (Internal only.)
  */
 final class EConstant extends AExpression {
 
-    EConstant(int line, String location, Object constant) {
-        super(line, location);
+    EConstant(Location location, Object constant) {
+        super(location);
 
         this.constant = constant;
     }
 
     @Override
-    void analyze(Variables variables) {
+    void extractVariables(Set<String> variables) {
+        throw new IllegalStateException("Illegal tree structure.");
+    }
+
+    @Override
+    void analyze(Locals locals) {
         if (constant instanceof String) {
-            actual = Definition.STRING_TYPE;
+            actual = String.class;
         } else if (constant instanceof Double) {
-            actual = Definition.DOUBLE_TYPE;
+            actual = double.class;
         } else if (constant instanceof Float) {
-            actual = Definition.FLOAT_TYPE;
+            actual = float.class;
         } else if (constant instanceof Long) {
-            actual = Definition.LONG_TYPE;
+            actual = long.class;
         } else if (constant instanceof Integer) {
-            actual = Definition.INT_TYPE;
+            actual = int.class;
         } else if (constant instanceof Character) {
-            actual = Definition.CHAR_TYPE;
+            actual = char.class;
         } else if (constant instanceof Short) {
-            actual = Definition.SHORT_TYPE;
+            actual = short.class;
         } else if (constant instanceof Byte) {
-            actual = Definition.BYTE_TYPE;
+            actual = byte.class;
         } else if (constant instanceof Boolean) {
-            actual = Definition.BOOLEAN_TYPE;
+            actual = boolean.class;
         } else {
-            throw new IllegalStateException(error("Illegal tree structure."));
+            throw createError(new IllegalStateException("Illegal tree structure."));
         }
     }
 
     @Override
-    void write(MethodWriter adapter) {
-        final Sort sort = actual.sort;
-
-        switch (sort) {
-            case STRING: adapter.push((String)constant);  break;
-            case DOUBLE: adapter.push((double)constant);  break;
-            case FLOAT:  adapter.push((float)constant);   break;
-            case LONG:   adapter.push((long)constant);    break;
-            case INT:    adapter.push((int)constant);     break;
-            case CHAR:   adapter.push((char)constant);    break;
-            case SHORT:  adapter.push((short)constant);   break;
-            case BYTE:   adapter.push((byte)constant);    break;
-            case BOOL:
-                if (tru != null && (boolean)constant) {
-                    adapter.goTo(tru);
-                } else if (fals != null && !(boolean)constant) {
-                    adapter.goTo(fals);
-                } else if (tru == null && fals == null) {
-                    adapter.push((boolean)constant);
-                }
-
-                break;
-            default:
-                throw new IllegalStateException(error("Illegal tree structure."));
+    void write(MethodWriter writer, Globals globals) {
+        if      (actual == String.class) writer.push((String)constant);
+        else if (actual == double.class) writer.push((double)constant);
+        else if (actual == float.class) writer.push((float)constant);
+        else if (actual == long.class) writer.push((long)constant);
+        else if (actual == int.class) writer.push((int)constant);
+        else if (actual == char.class) writer.push((char)constant);
+        else if (actual == short.class) writer.push((short)constant);
+        else if (actual == byte.class) writer.push((byte)constant);
+        else if (actual == boolean.class) writer.push((boolean)constant);
+        else {
+            throw createError(new IllegalStateException("Illegal tree structure."));
         }
+    }
 
-        if (sort != Sort.BOOL) {
-            adapter.writeBranch(tru, fals);
+    @Override
+    public String toString() {
+        String c = constant.toString();
+        if (constant instanceof String) {
+            c = "'" + c + "'";
         }
+        return singleLineToString(constant.getClass().getSimpleName(), c);
     }
 }

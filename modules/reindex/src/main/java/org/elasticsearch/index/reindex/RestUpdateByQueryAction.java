@@ -19,40 +19,41 @@
 
 package org.elasticsearch.index.reindex;
 
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.action.search.SearchRequest;
-import org.elasticsearch.client.Client;
-import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.indices.query.IndicesQueriesRegistry;
-import org.elasticsearch.rest.RestChannel;
+import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.script.Script;
-import org.elasticsearch.search.aggregations.AggregatorParsers;
-import org.elasticsearch.search.suggest.Suggesters;
+import org.elasticsearch.script.ScriptType;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
+import static org.elasticsearch.script.Script.DEFAULT_SCRIPT_LANG;
 
-public class RestUpdateByQueryAction extends AbstractBulkByQueryRestHandler<UpdateByQueryRequest, TransportUpdateByQueryAction> {
-
-    @Inject
-    public RestUpdateByQueryAction(Settings settings, RestController controller, Client client,
-            IndicesQueriesRegistry indicesQueriesRegistry, AggregatorParsers aggParsers, Suggesters suggesters,
-            ClusterService clusterService, TransportUpdateByQueryAction action) {
-        super(settings, client, indicesQueriesRegistry, aggParsers, suggesters, clusterService, action);
+public class RestUpdateByQueryAction extends AbstractBulkByQueryRestHandler<UpdateByQueryRequest, UpdateByQueryAction> {
+    public RestUpdateByQueryAction(Settings settings, RestController controller) {
+        super(settings, UpdateByQueryAction.INSTANCE);
         controller.registerHandler(POST, "/{index}/_update_by_query", this);
         controller.registerHandler(POST, "/{index}/{type}/_update_by_query", this);
     }
 
     @Override
-    protected void handleRequest(RestRequest request, RestChannel channel, Client client) throws Exception {
-        handleRequest(request, channel, false, true, false);
+    public String getName() {
+        return "update_by_query_action";
+    }
+
+    @Override
+    public RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
+        return doPrepareRequest(request, client, false, true);
     }
 
     @Override
@@ -67,11 +68,67 @@ public class RestUpdateByQueryAction extends AbstractBulkByQueryRestHandler<Upda
 
         Map<String, Consumer<Object>> consumers = new HashMap<>();
         consumers.put("conflicts", o -> internal.setConflicts((String) o));
-        consumers.put("script", o -> internal.setScript(Script.parse((Map<String, Object>)o, false, parseFieldMatcher)));
+        consumers.put("script", o -> internal.setScript(parseScript(o)));
 
         parseInternalRequest(internal, request, consumers);
 
         internal.setPipeline(request.param("pipeline"));
         return internal;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Script parseScript(Object config) {
+        assert config != null : "Script should not be null";
+
+        if (config instanceof String) {
+            return new Script((String) config);
+        } else if (config instanceof Map) {
+            Map<String,Object> configMap = (Map<String, Object>) config;
+            String script = null;
+            ScriptType type = null;
+            String lang = DEFAULT_SCRIPT_LANG;
+            Map<String, Object> params = Collections.emptyMap();
+            for (Iterator<Map.Entry<String, Object>> itr = configMap.entrySet().iterator(); itr.hasNext();) {
+                Map.Entry<String, Object> entry = itr.next();
+                String parameterName = entry.getKey();
+                Object parameterValue = entry.getValue();
+                if (Script.LANG_PARSE_FIELD.match(parameterName, LoggingDeprecationHandler.INSTANCE)) {
+                    if (parameterValue instanceof String || parameterValue == null) {
+                        lang = (String) parameterValue;
+                    } else {
+                        throw new ElasticsearchParseException("Value must be of type String: [" + parameterName + "]");
+                    }
+                } else if (Script.PARAMS_PARSE_FIELD.match(parameterName, LoggingDeprecationHandler.INSTANCE)) {
+                    if (parameterValue instanceof Map || parameterValue == null) {
+                        params = (Map<String, Object>) parameterValue;
+                    } else {
+                        throw new ElasticsearchParseException("Value must be of type String: [" + parameterName + "]");
+                    }
+                } else if (ScriptType.INLINE.getParseField().match(parameterName, LoggingDeprecationHandler.INSTANCE)) {
+                    if (parameterValue instanceof String || parameterValue == null) {
+                        script = (String) parameterValue;
+                        type = ScriptType.INLINE;
+                    } else {
+                        throw new ElasticsearchParseException("Value must be of type String: [" + parameterName + "]");
+                    }
+                } else if (ScriptType.STORED.getParseField().match(parameterName, LoggingDeprecationHandler.INSTANCE)) {
+                    if (parameterValue instanceof String || parameterValue == null) {
+                        script = (String) parameterValue;
+                        type = ScriptType.STORED;
+                    } else {
+                        throw new ElasticsearchParseException("Value must be of type String: [" + parameterName + "]");
+                    }
+                }
+            }
+            if (script == null) {
+                throw new ElasticsearchParseException("expected one of [{}] or [{}] fields, but found none",
+                    ScriptType.INLINE.getParseField().getPreferredName(), ScriptType.STORED.getParseField().getPreferredName());
+            }
+            assert type != null : "if script is not null, type should definitely not be null";
+
+            return new Script(type, lang, script, params);
+        } else {
+            throw new IllegalArgumentException("Script value should be a String or a Map");
+        }
     }
 }

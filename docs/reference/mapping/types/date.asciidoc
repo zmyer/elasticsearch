@@ -26,7 +26,7 @@ For instance:
 PUT my_index
 {
   "mappings": {
-    "my_type": {
+    "_doc": {
       "properties": {
         "date": {
           "type": "date" <1>
@@ -36,13 +36,13 @@ PUT my_index
   }
 }
 
-PUT my_index/my_type/1
+PUT my_index/_doc/1
 { "date": "2015-01-01" } <2>
 
-PUT my_index/my_type/2
+PUT my_index/_doc/2
 { "date": "2015-01-01T12:10:30Z" } <3>
 
-PUT my_index/my_type/3
+PUT my_index/_doc/3
 { "date": 1420070400001 } <4>
 
 GET my_index/_search
@@ -70,11 +70,11 @@ into a string.
 PUT my_index
 {
   "mappings": {
-    "my_type": {
+    "_doc": {
       "properties": {
         "date": {
           "type":   "date",
-          "format": "yyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis"
+          "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis"
         }
       }
     }
@@ -106,18 +106,16 @@ The following parameters are accepted by `date` fields:
     The date format(s) that can be parsed.  Defaults to
     `strict_date_optional_time||epoch_millis`.
 
+`locale`::
+
+    The locale to use when parsing dates since months do not have the same names
+    and/or abbreviations in all languages. The default is the
+    https://docs.oracle.com/javase/8/docs/api/java/util/Locale.html#ROOT[`ROOT` locale],
+
 <<ignore-malformed,`ignore_malformed`>>::
 
     If `true`, malformed numbers are ignored. If `false` (default), malformed
     numbers throw an exception and reject the whole document.
-
-<<include-in-all,`include_in_all`>>::
-
-    Whether or not the field value should be included in the
-    <<mapping-all-field,`_all`>> field? Accepts `true` or `false`.  Defaults
-    to `false` if <<mapping-index,`index`>> is set to `false`, or if a parent
-    <<object,`object`>> field sets `include_in_all` to `false`.
-    Otherwise defaults to `true`.
 
 <<mapping-index,`index`>>::
 

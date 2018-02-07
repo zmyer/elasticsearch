@@ -17,22 +17,18 @@
  * under the License.
  */
 
+import org.elasticsearch.gradle.LoggedExec
+
 task buildRpm(type: Rpm) {
-  dependsOn dependencyFiles, preparePackagingFiles
+  dependsOn preparePackagingFiles
   baseName 'elasticsearch' // this is what pom generation uses for artifactId
   // Follow elasticsearch's rpm file naming convention
   archiveName "${packageName}-${project.version}.rpm"
   packageGroup 'Application/Internet'
   prefix '/usr'
   packager 'Elasticsearch'
-  if (version.contains('~')) {
-    def tokenized = version.tokenize('~')
-    version tokenized[0]
-    release tokenized[1]
-  } else {
-    version version
-    release '1'
-  }
+  version = project.version.replace('-', '_')
+  release = '1'
   arch 'NOARCH'
   os 'LINUX'
   license '2009'
@@ -42,6 +38,17 @@ task buildRpm(type: Rpm) {
   fileMode 0644
   addParentDirs false
   // TODO ospackage doesn't support icon but we used to have one
+
+  // Declare the folders so that the RPM package manager removes
+  // them when upgrading or removing the package
+  directory('/usr/share/elasticsearch/bin', 0755)
+  directory('/usr/share/elasticsearch/lib', 0755)
+  directory('/usr/share/elasticsearch/modules', 0755)
+  modulesFiles.eachFile { FileCopyDetails fcp ->
+    if (fcp.name == "plugin-descriptor.properties") {
+      directory('/usr/share/elasticsearch/modules/' + fcp.file.parentFile.name, 0755)
+    }
+  }
 }
 
 artifacts {
@@ -49,10 +56,30 @@ artifacts {
   archives buildRpm
 }
 
-integTest {
-  /* We use real rpm tools to extract the rpm file for testing so we have to
-    skip the test if they aren't around. */
-  enabled = new File('/bin/rpm').exists() ||   // Standard location
-      new File('/usr/bin/rpm').exists() ||     // Debian location
-      new File('/usr/local/bin/rpm').exists()  // Homebrew location
+integTest.enabled = false
+licenseHeaders.enabled = false
+
+// task that sanity checks if the RPM archive can be extracted
+task checkRpm(type: LoggedExec) {
+  onlyIf { new File('/bin/rpm').exists() || new File('/usr/bin/rpm').exists() || new File('/usr/local/bin/rpm').exists() }
+  final File rpmDatabase = new File("${buildDir}", 'rpm-database')
+  final File rpmExtracted = new File("${buildDir}", 'rpm-extracted')
+  commandLine 'rpm',
+          '--badreloc',
+          '--nodeps',
+          '--noscripts',
+          '--notriggers',
+          '--dbpath',
+          rpmDatabase,
+          '--relocate',
+          "/=${rpmExtracted}",
+          '-i',
+          "${buildDir}/distributions/elasticsearch-${project.version}.rpm"
+  doFirst {
+    rpmDatabase.deleteDir()
+    rpmExtracted.deleteDir()
+  }
 }
+
+checkRpm.dependsOn buildRpm
+check.dependsOn checkRpm

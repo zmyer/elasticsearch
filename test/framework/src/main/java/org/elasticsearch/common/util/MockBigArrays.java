@@ -21,11 +21,11 @@ package org.elasticsearch.common.util;
 
 import com.carrotsearch.randomizedtesting.RandomizedContext;
 import com.carrotsearch.randomizedtesting.SeedUtils;
+
 import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.cache.recycler.PageCacheRecycler;
-import org.elasticsearch.common.inject.Inject;
+import org.apache.lucene.util.LuceneTestCase;
 import org.elasticsearch.common.util.set.Sets;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.test.ESTestCase;
@@ -33,13 +33,12 @@ import org.elasticsearch.test.ESTestCase;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Random;
-import java.util.Set;
-import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class MockBigArrays extends BigArrays {
 
@@ -49,7 +48,6 @@ public class MockBigArrays extends BigArrays {
      */
     private static final boolean TRACK_ALLOCATIONS = false;
 
-    private static final Set<BigArrays> INSTANCES = Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<BigArrays, Boolean>()));
     private static final ConcurrentMap<Object, Object> ACQUIRED_ARRAYS = new ConcurrentHashMap<>();
 
     public static void ensureAllArraysAreReleased() throws Exception {
@@ -63,8 +61,17 @@ public class MockBigArrays extends BigArrays {
                 masterCopy.keySet().retainAll(ACQUIRED_ARRAYS.keySet());
                 ACQUIRED_ARRAYS.keySet().removeAll(masterCopy.keySet()); // remove all existing master copy we will report on
                 if (!masterCopy.isEmpty()) {
-                    final Object cause = masterCopy.entrySet().iterator().next().getValue();
-                    throw new RuntimeException(masterCopy.size() + " arrays have not been released", cause instanceof Throwable ? (Throwable) cause : null);
+                    Iterator<Object> causes = masterCopy.values().iterator();
+                    Object firstCause = causes.next();
+                    RuntimeException exception = new RuntimeException(masterCopy.size() + " arrays have not been released",
+                            firstCause instanceof Throwable ? (Throwable) firstCause : null);
+                    while (causes.hasNext()) {
+                        Object cause = causes.next();
+                        if (cause instanceof Throwable) {
+                            exception.addSuppressed((Throwable) cause);
+                        }
+                    }
+                    throw exception;
                 }
             }
         }
@@ -74,12 +81,11 @@ public class MockBigArrays extends BigArrays {
     private final PageCacheRecycler recycler;
     private final CircuitBreakerService breakerService;
 
-    @Inject
     public MockBigArrays(PageCacheRecycler recycler, CircuitBreakerService breakerService) {
         this(recycler, breakerService, false);
     }
 
-    public MockBigArrays(PageCacheRecycler recycler, CircuitBreakerService breakerService, boolean checkBreaker) {
+    private MockBigArrays(PageCacheRecycler recycler, CircuitBreakerService breakerService, boolean checkBreaker) {
         super(recycler, breakerService, checkBreaker);
         this.recycler = recycler;
         this.breakerService = breakerService;
@@ -90,7 +96,6 @@ public class MockBigArrays extends BigArrays {
             seed = 0;
         }
         random = new Random(seed);
-        INSTANCES.add(this);
     }
 
 
@@ -247,17 +252,17 @@ public class MockBigArrays extends BigArrays {
         return arr;
     }
 
-    private static abstract class AbstractArrayWrapper {
+    private abstract static class AbstractArrayWrapper {
 
-        final BigArray in;
-        boolean clearOnResize;
-        AtomicBoolean released;
+        final boolean clearOnResize;
+        private final AtomicReference<AssertionError> originalRelease;
 
-        AbstractArrayWrapper(BigArray in, boolean clearOnResize) {
-            ACQUIRED_ARRAYS.put(this, TRACK_ALLOCATIONS ? new RuntimeException() : Boolean.TRUE);
-            this.in = in;
+        AbstractArrayWrapper(boolean clearOnResize) {
             this.clearOnResize = clearOnResize;
-            released = new AtomicBoolean(false);
+            this.originalRelease = new AtomicReference<>();
+            ACQUIRED_ARRAYS.put(this,
+                    TRACK_ALLOCATIONS ? new RuntimeException("Unreleased array from test: " + LuceneTestCase.getTestClass().getName())
+                            : Boolean.TRUE);
         }
 
         protected abstract BigArray getDelegate();
@@ -269,12 +274,12 @@ public class MockBigArrays extends BigArrays {
         }
 
         public long ramBytesUsed() {
-            return in.ramBytesUsed();
+            return getDelegate().ramBytesUsed();
         }
 
         public void close() {
-            if (!released.compareAndSet(false, true)) {
-                throw new IllegalStateException("Double release");
+            if (originalRelease.compareAndSet(null, new AssertionError()) == false) {
+                throw new IllegalStateException("Double release. Original release attached as cause", originalRelease.get());
             }
             ACQUIRED_ARRAYS.remove(this);
             randomizeContent(0, size());
@@ -288,7 +293,7 @@ public class MockBigArrays extends BigArrays {
         private final ByteArray in;
 
         ByteArrayWrapper(ByteArray in, boolean clearOnResize) {
-            super(in, clearOnResize);
+            super(clearOnResize);
             this.in = in;
         }
 
@@ -338,7 +343,7 @@ public class MockBigArrays extends BigArrays {
         private final IntArray in;
 
         IntArrayWrapper(IntArray in, boolean clearOnResize) {
-            super(in, clearOnResize);
+            super(clearOnResize);
             this.in = in;
         }
 
@@ -371,7 +376,7 @@ public class MockBigArrays extends BigArrays {
         public void fill(long fromIndex, long toIndex, int value) {
             in.fill(fromIndex, toIndex, value);
         }
-        
+
         @Override
         public Collection<Accountable> getChildResources() {
             return Collections.singleton(Accountables.namedAccountable("delegate", in));
@@ -383,7 +388,7 @@ public class MockBigArrays extends BigArrays {
         private final LongArray in;
 
         LongArrayWrapper(LongArray in, boolean clearOnResize) {
-            super(in, clearOnResize);
+            super(clearOnResize);
             this.in = in;
         }
 
@@ -416,7 +421,7 @@ public class MockBigArrays extends BigArrays {
         public void fill(long fromIndex, long toIndex, long value) {
             in.fill(fromIndex, toIndex, value);
         }
-        
+
         @Override
         public Collection<Accountable> getChildResources() {
             return Collections.singleton(Accountables.namedAccountable("delegate", in));
@@ -429,7 +434,7 @@ public class MockBigArrays extends BigArrays {
         private final FloatArray in;
 
         FloatArrayWrapper(FloatArray in, boolean clearOnResize) {
-            super(in, clearOnResize);
+            super(clearOnResize);
             this.in = in;
         }
 
@@ -474,7 +479,7 @@ public class MockBigArrays extends BigArrays {
         private final DoubleArray in;
 
         DoubleArrayWrapper(DoubleArray in, boolean clearOnResize) {
-            super(in, clearOnResize);
+            super(clearOnResize);
             this.in = in;
         }
 
@@ -519,7 +524,7 @@ public class MockBigArrays extends BigArrays {
         private final ObjectArray<T> in;
 
         ObjectArrayWrapper(ObjectArray<T> in) {
-            super(in, false);
+            super(false);
             this.in = in;
         }
 

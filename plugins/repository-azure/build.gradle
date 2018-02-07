@@ -19,12 +19,13 @@
 
 esplugin {
   description 'The Azure Repository plugin adds support for Azure storage repositories.'
-  classname 'org.elasticsearch.plugin.repository.azure.AzureRepositoryPlugin'
+  classname 'org.elasticsearch.repositories.azure.AzureRepositoryPlugin'
 }
 
 dependencies {
-  compile 'com.microsoft.azure:azure-storage:4.0.0'
-  compile 'org.apache.commons:commons-lang3:3.3.2'
+  compile 'com.microsoft.azure:azure-storage:5.0.0'
+  compile 'com.microsoft.azure:azure-keyvault-core:0.8.0'
+  compile 'org.apache.commons:commons-lang3:3.4'
 }
 
 dependencyLicenses {
@@ -40,3 +41,10 @@ thirdPartyAudit.excludes = [
   'org.slf4j.Logger',
   'org.slf4j.LoggerFactory',
 ]
+
+integTestCluster {
+  keystoreSetting 'azure.client.default.account', 'cloudazureresource'
+  keystoreSetting 'azure.client.default.key', 'abcdefgh'
+  keystoreSetting 'azure.client.secondary.account', 'cloudazureresource'
+  keystoreSetting 'azure.client.secondary.key', 'abcdefgh'
+}

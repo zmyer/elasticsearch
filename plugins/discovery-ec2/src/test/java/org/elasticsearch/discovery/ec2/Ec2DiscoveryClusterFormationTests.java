@@ -22,15 +22,17 @@ package org.elasticsearch.discovery.ec2;
 import com.amazonaws.util.IOUtils;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpServer;
-import org.elasticsearch.cloud.aws.AwsEc2Service;
+import org.apache.http.NameValuePair;
+import org.apache.http.client.utils.URLEncodedUtils;
 import org.elasticsearch.common.SuppressForbidden;
 import org.elasticsearch.common.io.FileSystemUtils;
 import org.elasticsearch.common.logging.Loggers;
+import org.elasticsearch.common.settings.MockSecureSettings;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.plugin.discovery.ec2.Ec2DiscoveryPlugin;
+import org.elasticsearch.discovery.DiscoveryModule;
+import org.elasticsearch.mocksocket.MockHttpServer;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.test.ESIntegTestCase;
-import org.jboss.netty.handler.codec.http.QueryStringDecoder;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
@@ -46,41 +48,27 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoTimeout;
 import static org.hamcrest.Matchers.equalTo;
 
-@ESIntegTestCase.SuppressLocalMode
-@ESIntegTestCase.ClusterScope(numDataNodes = 2, numClientNodes = 0)
+@ESIntegTestCase.ClusterScope(supportsDedicatedMasters = false, numDataNodes = 2, numClientNodes = 0)
 @SuppressForbidden(reason = "use http server")
 // TODO this should be a IT but currently all ITs in this project run against a real cluster
 public class Ec2DiscoveryClusterFormationTests extends ESIntegTestCase {
-
-    public static class TestPlugin extends Plugin {
-
-        @Override
-        public String name() {
-            return Ec2DiscoveryClusterFormationTests.class.getName();
-        }
-
-        @Override
-        public String description() {
-            return Ec2DiscoveryClusterFormationTests.class.getName();
-        }
-    }
 
     private static HttpServer httpServer;
     private static Path logDir;
 
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
-        return pluginList(Ec2DiscoveryPlugin.class, TestPlugin.class);
+        return Arrays.asList(Ec2DiscoveryPlugin.class);
     }
 
     @Override
@@ -91,15 +79,17 @@ public class Ec2DiscoveryClusterFormationTests extends ESIntegTestCase {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+        MockSecureSettings secureSettings = new MockSecureSettings();
+        secureSettings.setString(AwsEc2Service.ACCESS_KEY_SETTING.getKey(), "some_access");
+        secureSettings.setString(AwsEc2Service.SECRET_KEY_SETTING.getKey(), "some_secret");
         return Settings.builder().put(super.nodeSettings(nodeOrdinal))
-            .put("discovery.type", "ec2")
+            .put(DiscoveryModule.DISCOVERY_HOSTS_PROVIDER_SETTING.getKey(), "ec2")
             .put("path.logs", resolve)
             .put("transport.tcp.port", 0)
             .put("node.portsfile", "true")
-            .put("cloud.aws.access_key", "some_access")
-            .put("cloud.aws.secret_key", "some_key")
-            .put(AwsEc2Service.CLOUD_EC2.ENDPOINT_SETTING.getKey(), "http://" + httpServer.getAddress().getHostName() + ":" +
+            .put(AwsEc2Service.ENDPOINT_SETTING.getKey(), "http://" + httpServer.getAddress().getHostName() + ":" +
                 httpServer.getAddress().getPort())
+            .setSecureSettings(secureSettings)
             .build();
     }
 
@@ -109,14 +99,18 @@ public class Ec2DiscoveryClusterFormationTests extends ESIntegTestCase {
     @BeforeClass
     public static void startHttpd() throws Exception {
         logDir = createTempDir();
-        httpServer = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress().getHostAddress(), 0), 0);
+        httpServer = MockHttpServer.createHttp(new InetSocketAddress(InetAddress.getLoopbackAddress().getHostAddress(), 0), 0);
 
         httpServer.createContext("/", (s) -> {
             Headers headers = s.getResponseHeaders();
             headers.add("Content-Type", "text/xml; charset=UTF-8");
-            QueryStringDecoder decoder = new QueryStringDecoder("?" + IOUtils.toString(s.getRequestBody()));
-            Map<String, List<String>> queryParams = decoder.getParameters();
-            String action = queryParams.get("Action").get(0);
+            String action = null;
+            for (NameValuePair parse : URLEncodedUtils.parse(IOUtils.toString(s.getRequestBody()), StandardCharsets.UTF_8)) {
+                if ("Action".equals(parse.getName())) {
+                    action = parse.getValue();
+                    break;
+                }
+            }
             assertThat(action, equalTo("DescribeInstances"));
 
             XMLOutputFactory xmlOutputFactory = XMLOutputFactory.newFactory();
@@ -252,7 +246,7 @@ public class Ec2DiscoveryClusterFormationTests extends ESIntegTestCase {
         // only wait for the cluster to form
         assertNoTimeout(client().admin().cluster().prepareHealth().setWaitForNodes(Integer.toString(2)).get());
         // add one more node and wait for it to join
-        internalCluster().startDataOnlyNodeAsync().get();
+        internalCluster().startDataOnlyNode();
         assertNoTimeout(client().admin().cluster().prepareHealth().setWaitForNodes(Integer.toString(3)).get());
     }
 }

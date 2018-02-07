@@ -19,28 +19,45 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Variables;
+import org.elasticsearch.painless.Globals;
+import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+
+import java.util.Set;
 
 /**
  * Represents a boolean constant.
  */
 public final class EBoolean extends AExpression {
 
-    public EBoolean(int line, String location, boolean constant) {
-        super(line, location);
+    public EBoolean(Location location, boolean constant) {
+        super(location);
 
         this.constant = constant;
     }
 
     @Override
-    void analyze(Variables variables) {
-        actual = Definition.BOOLEAN_TYPE;
+    void extractVariables(Set<String> variables) {
+        // Do nothing.
     }
 
     @Override
-    void write(MethodWriter adapter) {
-        throw new IllegalArgumentException(error("Illegal tree structure."));
+    void analyze(Locals locals) {
+        if (!read) {
+            throw createError(new IllegalArgumentException("Must read from constant [" + constant + "]."));
+        }
+
+        actual = boolean.class;
+    }
+
+    @Override
+    void write(MethodWriter adapter, Globals globals) {
+        throw createError(new IllegalStateException("Illegal tree structure."));
+    }
+
+    @Override
+    public String toString() {
+        return singleLineToString(constant);
     }
 }

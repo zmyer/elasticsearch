@@ -60,8 +60,9 @@ json.put("message","trying out Elasticsearch");
 [[java-docs-index-generate-beans]]
 ===== Serialize your beans
 
-Elasticsearch already uses http://wiki.fasterxml.com/JacksonHome[Jackson].
-So you can use it to serialize your beans to JSON:
+You can use http://wiki.fasterxml.com/JacksonHome[Jackson] to serialize
+your beans to JSON. Please add http://search.maven.org/#search%7Cga%7C1%7Cjackson-databind[Jackson Databind]
+ to your project. Then you can use `ObjectMapper` to serialize your beans:
 
 [source,java]
 --------------------------------------------------
@@ -139,7 +140,7 @@ String json = "{" +
     "}";
 
 IndexResponse response = client.prepareIndex("twitter", "tweet")
-        .setSource(json)
+        .setSource(json, XContentType.JSON)
         .get();
 --------------------------------------------------
 
@@ -155,23 +156,10 @@ String _type = response.getType();
 String _id = response.getId();
 // Version (if it's the first time you index this document, you will get: 1)
 long _version = response.getVersion();
-// isCreated() is true if the document is a new one, false if it has been updated
-boolean created = response.isCreated();
+// status has stored current instance statement.
+RestStatus status = response.status();
 --------------------------------------------------
 
 For more information on the index operation, check out the REST
 {ref}/docs-index_.html[index] docs.
 
-
-[[java-docs-index-thread]]
-==== Operation Threading
-
-The index API allows one to set the threading model the operation will be
-performed when the actual execution of the API is performed on the same
-node (the API is executed on a shard that is allocated on the same
-server).
-
-The options are to execute the operation on a different thread, or to
-execute it on the calling thread (note that the API is still asynchronous). By
-default, `operationThreaded` is set to `true` which means the operation
-is executed on a different thread.

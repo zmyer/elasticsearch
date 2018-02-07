@@ -1,5 +1,8 @@
 package org.elasticsearch.painless;
 
+import java.util.List;
+import java.util.function.Function;
+
 /*
  * Licensed to Elasticsearch under one or more contributor
  * license agreements. See the NOTICE file distributed with
@@ -23,11 +26,12 @@ package org.elasticsearch.painless;
 public class FeatureTest {
     private int x;
     private int y;
-    
+    public int z;
+
     /** empty ctor */
     public FeatureTest() {
     }
-    
+
     /** ctor with params */
     public FeatureTest(int x, int y) {
         this.x = x;
@@ -58,9 +62,18 @@ public class FeatureTest {
     public static boolean overloadedStatic() {
         return true;
     }
-    
+
     /** static method that returns what you ask it */
     public static boolean overloadedStatic(boolean whatToReturn) {
         return whatToReturn;
+    }
+
+    /** method taking two functions! */
+    public Object twoFunctionsOfX(Function<Object,Object> f, Function<Object,Object> g) {
+        return f.apply(g.apply(x));
+    }
+
+    public void listInput(List<Object> list) {
+
     }
 }

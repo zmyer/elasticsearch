@@ -24,6 +24,7 @@ import org.elasticsearch.common.SuppressForbidden;
 import org.elasticsearch.common.io.PathUtils;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.env.Environment;
+import org.elasticsearch.env.TestEnvironment;
 import org.elasticsearch.test.ESTestCase;
 
 import java.io.FilePermission;
@@ -33,6 +34,9 @@ import java.nio.file.Path;
 import java.security.PermissionCollection;
 import java.security.Permissions;
 import java.util.Set;
+
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasToString;
 
 @SuppressForbidden(reason = "modifies system properties and attempts to create symbolic links intentionally")
 public class EvilSecurityTests extends ESTestCase {
@@ -51,7 +55,7 @@ public class EvilSecurityTests extends ESTestCase {
         Permissions permissions;
         try {
             System.setProperty("java.io.tmpdir", fakeTmpDir.toString());
-            Environment environment = new Environment(settings);
+            Environment environment = TestEnvironment.newEnvironment(settings);
             permissions = Security.createPermissions(environment);
         } finally {
             System.setProperty("java.io.tmpdir", realTmpDir);
@@ -68,6 +72,8 @@ public class EvilSecurityTests extends ESTestCase {
     }
 
     /** test generated permissions for all configured paths */
+    @SuppressWarnings("deprecation") // needs to check settings for deprecated path
+    @SuppressForbidden(reason = "to create FilePermission object")
     public void testEnvironmentPaths() throws Exception {
         Path path = createTempDir();
         // make a fake ES home and ensure we only grant permissions to that.
@@ -75,10 +81,8 @@ public class EvilSecurityTests extends ESTestCase {
 
         Settings.Builder settingsBuilder = Settings.builder();
         settingsBuilder.put(Environment.PATH_HOME_SETTING.getKey(), esHome.resolve("home").toString());
-        settingsBuilder.put(Environment.PATH_CONF_SETTING.getKey(), esHome.resolve("conf").toString());
-        settingsBuilder.put(Environment.PATH_SCRIPTS_SETTING.getKey(), esHome.resolve("scripts").toString());
-        settingsBuilder.put(Environment.PATH_PLUGINS_SETTING.getKey(), esHome.resolve("plugins").toString());
-        settingsBuilder.putArray(Environment.PATH_DATA_SETTING.getKey(), esHome.resolve("data1").toString(), esHome.resolve("data2").toString());
+        settingsBuilder.putList(Environment.PATH_DATA_SETTING.getKey(), esHome.resolve("data1").toString(),
+                esHome.resolve("data2").toString());
         settingsBuilder.put(Environment.PATH_SHARED_DATA_SETTING.getKey(), esHome.resolve("custom").toString());
         settingsBuilder.put(Environment.PATH_LOGS_SETTING.getKey(), esHome.resolve("logs").toString());
         settingsBuilder.put(Environment.PIDFILE_SETTING.getKey(), esHome.resolve("test.pid").toString());
@@ -90,7 +94,7 @@ public class EvilSecurityTests extends ESTestCase {
         Environment environment;
         try {
             System.setProperty("java.io.tmpdir", fakeTmpDir.toString());
-            environment = new Environment(settings);
+            environment = new Environment(settings, esHome.resolve("conf"));
             permissions = Security.createPermissions(environment);
         } finally {
             System.setProperty("java.io.tmpdir", realTmpDir);
@@ -115,8 +119,6 @@ public class EvilSecurityTests extends ESTestCase {
         assertExactPermissions(new FilePermission(environment.modulesFile().toString(), "read,readlink"), permissions);
         // config file: ro
         assertExactPermissions(new FilePermission(environment.configFile().toString(), "read,readlink"), permissions);
-        // scripts file: ro
-        assertExactPermissions(new FilePermission(environment.scriptsFile().toString(), "read,readlink"), permissions);
         // plugins: ro
         assertExactPermissions(new FilePermission(environment.pluginsFile().toString(), "read,readlink"), permissions);
 
@@ -134,6 +136,30 @@ public class EvilSecurityTests extends ESTestCase {
         assertExactPermissions(new FilePermission(fakeTmpDir.toString(), "read,readlink,write,delete"), permissions);
         // PID file: delete only (for the shutdown hook)
         assertExactPermissions(new FilePermission(environment.pidFile().toString(), "delete"), permissions);
+    }
+
+    public void testDuplicateDataPaths() throws IOException {
+        final Path path = createTempDir();
+        final Path home = path.resolve("home");
+        final Path data = path.resolve("data");
+        final Path duplicate;
+        if (randomBoolean()) {
+            duplicate = data;
+        } else {
+            duplicate = createTempDir().toAbsolutePath().resolve("link");
+            Files.createSymbolicLink(duplicate, data);
+        }
+
+        final Settings settings =
+                Settings
+                        .builder()
+                        .put(Environment.PATH_HOME_SETTING.getKey(), home.toString())
+                        .putList(Environment.PATH_DATA_SETTING.getKey(), data.toString(), duplicate.toString())
+                        .build();
+
+        final Environment environment = TestEnvironment.newEnvironment(settings);
+        final IllegalStateException e = expectThrows(IllegalStateException.class, () -> Security.createPermissions(environment));
+        assertThat(e, hasToString(containsString("path [" + duplicate.toRealPath() + "] is duplicated by [" + duplicate + "]")));
     }
 
     public void testEnsureSymlink() throws IOException {
@@ -192,7 +218,7 @@ public class EvilSecurityTests extends ESTestCase {
             assumeNoException("test cannot create symbolic links with security manager enabled", e);
         }
         Permissions permissions = new Permissions();
-        Security.addPath(permissions, "testing", link, "read");
+        FilePermissionUtils.addDirectoryPath(permissions, "testing", link, "read");
         assertExactPermissions(new FilePermission(link.toString(), "read"), permissions);
         assertExactPermissions(new FilePermission(link.resolve("foo").toString(), "read"), permissions);
         assertExactPermissions(new FilePermission(target.toString(), "read"), permissions);
@@ -202,6 +228,7 @@ public class EvilSecurityTests extends ESTestCase {
     /**
      * checks exact file permissions, meaning those and only those for that path.
      */
+    @SuppressForbidden(reason = "to create FilePermission object")
     static void assertExactPermissions(FilePermission expected, PermissionCollection actual) {
         String target = expected.getName(); // see javadocs
         Set<String> permissionSet = asSet(expected.getActions().split(","));
@@ -221,6 +248,7 @@ public class EvilSecurityTests extends ESTestCase {
     /**
      * checks that this path has no permissions
      */
+    @SuppressForbidden(reason = "to create FilePermission object")
     static void assertNoPermissions(Path path, PermissionCollection actual) {
         String target = path.toString();
         assertFalse(actual.implies(new FilePermission(target, "read")));

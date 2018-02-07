@@ -34,7 +34,6 @@ class PrecommitTasks {
             configureForbiddenApis(project),
             configureCheckstyle(project),
             configureNamingConventions(project),
-            configureLoggerUsage(project),
             project.tasks.create('forbiddenPatterns', ForbiddenPatternsTask.class),
             project.tasks.create('licenseHeaders', LicenseHeadersTask.class),
             project.tasks.create('jarHell', JarHellTask.class),
@@ -49,6 +48,20 @@ class PrecommitTasks {
             UpdateShasTask updateShas = project.tasks.create('updateShas', UpdateShasTask.class)
             updateShas.parentTask = dependencyLicenses
         }
+        if (project.path != ':build-tools') {
+            /*
+             * Sadly, build-tools can't have logger-usage-check because that
+             * would create a circular project dependency between build-tools
+             * (which provides NamingConventionsCheck) and :test:logger-usage
+             * which provides the logger usage check. Since the build tools
+             * don't use the logger usage check because they don't have any
+             * of Elaticsearch's loggers and :test:logger-usage actually does
+             * use the NamingConventionsCheck we break the circular dependency
+             * here.
+             */
+            precommitTasks.add(configureLoggerUsage(project))
+        }
+
 
         Map<String, Object> precommitOptions = [
             name: 'precommit',
@@ -62,9 +75,8 @@ class PrecommitTasks {
     private static Task configureForbiddenApis(Project project) {
         project.pluginManager.apply(ForbiddenApisPlugin.class)
         project.forbiddenApis {
-            internalRuntimeForbidden = true
             failOnUnsupportedJava = false
-            bundledSignatures = ['jdk-unsafe', 'jdk-deprecated', 'jdk-system-out']
+            bundledSignatures = ['jdk-unsafe', 'jdk-deprecated', 'jdk-non-portable', 'jdk-system-out']
             signaturesURLs = [getClass().getResource('/forbidden/jdk-signatures.txt'),
                               getClass().getResource('/forbidden/es-all-signatures.txt')]
             suppressAnnotations = ['**.SuppressForbidden']
@@ -72,13 +84,14 @@ class PrecommitTasks {
         Task mainForbidden = project.tasks.findByName('forbiddenApisMain')
         if (mainForbidden != null) {
             mainForbidden.configure {
-                signaturesURLs += getClass().getResource('/forbidden/es-core-signatures.txt')
+                signaturesURLs += getClass().getResource('/forbidden/es-server-signatures.txt')
             }
         }
         Task testForbidden = project.tasks.findByName('forbiddenApisTest')
         if (testForbidden != null) {
             testForbidden.configure {
                 signaturesURLs += getClass().getResource('/forbidden/es-test-signatures.txt')
+                signaturesURLs += getClass().getResource('/forbidden/http-signatures.txt')
             }
         }
         Task forbiddenApis = project.tasks.findByName('forbiddenApis')
@@ -127,6 +140,7 @@ class PrecommitTasks {
             configProperties = [
                 suppressions: checkstyleSuppressions
             ]
+            toolVersion = 7.5
         }
         for (String taskName : ['checkstyleMain', 'checkstyleTest']) {
             Task task = project.tasks.findByName(taskName)
@@ -135,6 +149,9 @@ class PrecommitTasks {
                 checkstyleTask.dependsOn(task)
                 task.dependsOn(copyCheckstyleConf)
                 task.inputs.file(checkstyleSuppressions)
+                task.reports {
+                    html.enabled false
+                }
             }
         }
         return checkstyleTask

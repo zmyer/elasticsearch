@@ -19,38 +19,49 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Operation;
-import org.elasticsearch.painless.Variables;
-import org.objectweb.asm.Label;
+import org.elasticsearch.painless.Globals;
+import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.Operation;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.Opcodes;
+
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Represents a boolean expression.
  */
 public final class EBool extends AExpression {
 
-    final Operation operation;
-    AExpression left;
-    AExpression right;
+    private final Operation operation;
+    private AExpression left;
+    private AExpression right;
 
-    public EBool(int line, String location, Operation operation, AExpression left, AExpression right) {
-        super(line, location);
+    public EBool(Location location, Operation operation, AExpression left, AExpression right) {
+        super(location);
 
-        this.operation = operation;
-        this.left = left;
-        this.right = right;
+        this.operation = Objects.requireNonNull(operation);
+        this.left = Objects.requireNonNull(left);
+        this.right = Objects.requireNonNull(right);
     }
 
     @Override
-    void analyze(Variables variables) {
-        left.expected = Definition.BOOLEAN_TYPE;
-        left.analyze(variables);
-        left = left.cast(variables);
+    void extractVariables(Set<String> variables) {
+        left.extractVariables(variables);
+        right.extractVariables(variables);
+    }
 
-        right.expected = Definition.BOOLEAN_TYPE;
-        right.analyze(variables);
-        right = right.cast(variables);
+    @Override
+    void analyze(Locals locals) {
+        left.expected = boolean.class;
+        left.analyze(locals);
+        left = left.cast(locals);
+
+        right.expected = boolean.class;
+        right.analyze(locals);
+        right = right.cast(locals);
 
         if (left.constant != null && right.constant != null) {
             if (operation == Operation.AND) {
@@ -58,81 +69,52 @@ public final class EBool extends AExpression {
             } else if (operation == Operation.OR) {
                 constant = (boolean)left.constant || (boolean)right.constant;
             } else {
-                throw new IllegalStateException(error("Illegal tree structure."));
+                throw createError(new IllegalStateException("Illegal tree structure."));
             }
         }
 
-        actual = Definition.BOOLEAN_TYPE;
+        actual = boolean.class;
     }
 
     @Override
-    void write(MethodWriter adapter) {
-        if (tru != null || fals != null) {
-            if (operation == Operation.AND) {
-                final Label localfals = fals == null ? new Label() : fals;
+    void write(MethodWriter writer, Globals globals) {
+        if (operation == Operation.AND) {
+            Label fals = new Label();
+            Label end = new Label();
 
-                left.fals = localfals;
-                right.tru = tru;
-                right.fals = fals;
+            left.write(writer, globals);
+            writer.ifZCmp(Opcodes.IFEQ, fals);
+            right.write(writer, globals);
+            writer.ifZCmp(Opcodes.IFEQ, fals);
 
-                left.write(adapter);
-                right.write(adapter);
+            writer.push(true);
+            writer.goTo(end);
+            writer.mark(fals);
+            writer.push(false);
+            writer.mark(end);
+        } else if (operation == Operation.OR) {
+            Label tru = new Label();
+            Label fals = new Label();
+            Label end = new Label();
 
-                if (fals == null) {
-                    adapter.mark(localfals);
-                }
-            } else if (operation == Operation.OR) {
-                final Label localtru = tru == null ? new Label() : tru;
+            left.write(writer, globals);
+            writer.ifZCmp(Opcodes.IFNE, tru);
+            right.write(writer, globals);
+            writer.ifZCmp(Opcodes.IFEQ, fals);
 
-                left.tru = localtru;
-                right.tru = tru;
-                right.fals = fals;
-
-                left.write(adapter);
-                right.write(adapter);
-
-                if (tru == null) {
-                    adapter.mark(localtru);
-                }
-            } else {
-                throw new IllegalStateException(error("Illegal tree structure."));
-            }
+            writer.mark(tru);
+            writer.push(true);
+            writer.goTo(end);
+            writer.mark(fals);
+            writer.push(false);
+            writer.mark(end);
         } else {
-            if (operation == Operation.AND) {
-                final Label localfals = new Label();
-                final Label end = new Label();
-
-                left.fals = localfals;
-                right.fals = localfals;
-
-                left.write(adapter);
-                right.write(adapter);
-
-                adapter.push(true);
-                adapter.goTo(end);
-                adapter.mark(localfals);
-                adapter.push(false);
-                adapter.mark(end);
-            } else if (operation == Operation.OR) {
-                final Label localtru = new Label();
-                final Label localfals = new Label();
-                final Label end = new Label();
-
-                left.tru = localtru;
-                right.fals = localfals;
-
-                left.write(adapter);
-                right.write(adapter);
-
-                adapter.mark(localtru);
-                adapter.push(true);
-                adapter.goTo(end);
-                adapter.mark(localfals);
-                adapter.push(false);
-                adapter.mark(end);
-            } else {
-                throw new IllegalStateException(error("Illegal tree structure."));
-            }
+            throw createError(new IllegalStateException("Illegal tree structure."));
         }
+    }
+
+    @Override
+    public String toString() {
+        return singleLineToString(left, operation.symbol, right);
     }
 }

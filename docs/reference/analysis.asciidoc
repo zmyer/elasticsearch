@@ -39,7 +39,7 @@ Each <<text,`text`>> field in a mapping can specify its own
 PUT my_index
 {
   "mappings": {
-    "my_type": {
+    "_doc": {
       "properties": {
         "title": {
           "type":     "text",
@@ -111,6 +111,8 @@ include::analysis/anatomy.asciidoc[]
 include::analysis/testing.asciidoc[]
 
 include::analysis/analyzers.asciidoc[]
+
+include::analysis/normalizers.asciidoc[]
 
 include::analysis/tokenizers.asciidoc[]
 

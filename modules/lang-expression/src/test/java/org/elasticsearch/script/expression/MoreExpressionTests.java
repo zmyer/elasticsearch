@@ -19,46 +19,40 @@
 
 package org.elasticsearch.script.expression;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 import org.apache.lucene.expressions.Expression;
 import org.apache.lucene.expressions.js.JavascriptCompiler;
-import org.elasticsearch.Version;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.action.update.UpdateRequestBuilder;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.lucene.search.function.CombineFunction;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.query.functionscore.ScoreFunctionBuilder;
 import org.elasticsearch.index.query.functionscore.ScoreFunctionBuilders;
 import org.elasticsearch.plugins.Plugin;
-import org.elasticsearch.script.CompiledScript;
+import org.elasticsearch.script.GeneralScriptException;
 import org.elasticsearch.script.Script;
-import org.elasticsearch.script.ScriptException;
-import org.elasticsearch.script.ScriptService.ScriptType;
+import org.elasticsearch.script.ScriptType;
 import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
 import org.elasticsearch.search.aggregations.bucket.histogram.Histogram;
-import org.elasticsearch.search.aggregations.bucket.histogram.InternalHistogram;
-import org.elasticsearch.search.aggregations.bucket.histogram.InternalHistogram.Bucket;
 import org.elasticsearch.search.aggregations.metrics.stats.Stats;
 import org.elasticsearch.search.aggregations.pipeline.SimpleValue;
 import org.elasticsearch.search.sort.SortBuilders;
 import org.elasticsearch.search.sort.SortOrder;
 import org.elasticsearch.test.ESIntegTestCase;
-import org.elasticsearch.test.VersionUtils;
 import org.elasticsearch.test.hamcrest.ElasticsearchAssertions;
 
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.elasticsearch.action.support.WriteRequest.RefreshPolicy.IMMEDIATE;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.search.aggregations.AggregationBuilders.histogram;
 import static org.elasticsearch.search.aggregations.AggregationBuilders.sum;
@@ -90,14 +84,14 @@ public class MoreExpressionTests extends ESIntegTestCase {
         req.setQuery(QueryBuilders.matchAllQuery())
                 .addSort(SortBuilders.fieldSort("_uid")
                         .order(SortOrder.ASC))
-                .addScriptField("foo", new Script(script, ScriptType.INLINE, "expression", paramsMap));
+                .addScriptField("foo", new Script(ScriptType.INLINE, "expression", script, paramsMap));
         return req;
     }
 
     public void testBasic() throws Exception {
         createIndex("test");
         ensureGreen("test");
-        client().prepareIndex("test", "doc", "1").setSource("foo", 4).setRefresh(true).get();
+        client().prepareIndex("test", "doc", "1").setSource("foo", 4).setRefreshPolicy(IMMEDIATE).get();
         SearchResponse rsp = buildRequest("doc['foo'] + 1").get();
         assertEquals(1, rsp.getHits().getTotalHits());
         assertEquals(5.0, rsp.getHits().getAt(0).field("foo").getValue(), 0.0D);
@@ -106,7 +100,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
     public void testFunction() throws Exception {
         createIndex("test");
         ensureGreen("test");
-        client().prepareIndex("test", "doc", "1").setSource("foo", 4).setRefresh(true).get();
+        client().prepareIndex("test", "doc", "1").setSource("foo", 4).setRefreshPolicy(IMMEDIATE).get();
         SearchResponse rsp = buildRequest("doc['foo'] + abs(1)").get();
         assertSearchResponse(rsp);
         assertEquals(1, rsp.getHits().getTotalHits());
@@ -116,7 +110,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
     public void testBasicUsingDotValue() throws Exception {
         createIndex("test");
         ensureGreen("test");
-        client().prepareIndex("test", "doc", "1").setSource("foo", 4).setRefresh(true).get();
+        client().prepareIndex("test", "doc", "1").setSource("foo", 4).setRefreshPolicy(IMMEDIATE).get();
         SearchResponse rsp = buildRequest("doc['foo'].value + 1").get();
         assertEquals(1, rsp.getHits().getTotalHits());
         assertEquals(5.0, rsp.getHits().getAt(0).field("foo").getValue(), 0.0D);
@@ -129,7 +123,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
                 client().prepareIndex("test", "doc", "1").setSource("text", "hello goodbye"),
                 client().prepareIndex("test", "doc", "2").setSource("text", "hello hello hello goodbye"),
                 client().prepareIndex("test", "doc", "3").setSource("text", "hello hello goodebye"));
-        ScoreFunctionBuilder<?> score = ScoreFunctionBuilders.scriptFunction(new Script("1 / _score", ScriptType.INLINE, "expression", null));
+        ScoreFunctionBuilder<?> score = ScoreFunctionBuilders.scriptFunction(new Script(ScriptType.INLINE, "expression", "1 / _score", Collections.emptyMap()));
         SearchRequestBuilder req = client().prepareSearch().setIndices("test");
         req.setQuery(QueryBuilders.functionScoreQuery(QueryBuilders.termQuery("text", "hello"), score).boostMode(CombineFunction.REPLACE));
         req.setSearchType(SearchType.DFS_QUERY_THEN_FETCH); // make sure DF is consistent
@@ -170,13 +164,55 @@ public class MoreExpressionTests extends ESIntegTestCase {
         assertEquals(1983.0, hits.getAt(1).field("foo").getValue(), 0.0D);
     }
 
+    public void testDateObjectMethods() throws Exception {
+        ElasticsearchAssertions.assertAcked(prepareCreate("test").addMapping("doc", "date0", "type=date", "date1", "type=date"));
+        ensureGreen("test");
+        indexRandom(true,
+                client().prepareIndex("test", "doc", "1").setSource("date0", "2015-04-28T04:02:07Z", "date1", "1985-09-01T23:11:01Z"),
+                client().prepareIndex("test", "doc", "2").setSource("date0", "2013-12-25T11:56:45Z", "date1", "1983-10-13T23:15:00Z"));
+        SearchResponse rsp = buildRequest("doc['date0'].date.secondOfMinute - doc['date0'].date.minuteOfHour").get();
+        assertEquals(2, rsp.getHits().getTotalHits());
+        SearchHits hits = rsp.getHits();
+        assertEquals(5.0, hits.getAt(0).field("foo").getValue(), 0.0D);
+        assertEquals(-11.0, hits.getAt(1).field("foo").getValue(), 0.0D);
+        rsp = buildRequest("doc['date0'].date.getHourOfDay() + doc['date1'].date.dayOfMonth").get();
+        assertEquals(2, rsp.getHits().getTotalHits());
+        hits = rsp.getHits();
+        assertEquals(5.0, hits.getAt(0).field("foo").getValue(), 0.0D);
+        assertEquals(24.0, hits.getAt(1).field("foo").getValue(), 0.0D);
+        rsp = buildRequest("doc['date1'].date.monthOfYear + 1").get();
+        assertEquals(2, rsp.getHits().getTotalHits());
+        hits = rsp.getHits();
+        assertEquals(10.0, hits.getAt(0).field("foo").getValue(), 0.0D);
+        assertEquals(11.0, hits.getAt(1).field("foo").getValue(), 0.0D);
+        rsp = buildRequest("doc['date1'].date.year").get();
+        assertEquals(2, rsp.getHits().getTotalHits());
+        hits = rsp.getHits();
+        assertEquals(1985.0, hits.getAt(0).field("foo").getValue(), 0.0D);
+        assertEquals(1983.0, hits.getAt(1).field("foo").getValue(), 0.0D);
+    }
+
     public void testMultiValueMethods() throws Exception {
         ElasticsearchAssertions.assertAcked(prepareCreate("test").addMapping("doc", "double0", "type=double", "double1", "type=double", "double2", "type=double"));
         ensureGreen("test");
+
+        Map<String, Object> doc1 = new HashMap<>();
+        doc1.put("double0", new Double[]{5.0d, 1.0d, 1.5d});
+        doc1.put("double1", new Double[]{1.2d, 2.4d});
+        doc1.put("double2", 3.0d);
+
+        Map<String, Object> doc2 = new HashMap<>();
+        doc2.put("double0", 5.0d);
+        doc2.put("double1", 3.0d);
+
+        Map<String, Object> doc3 = new HashMap<>();
+        doc3.put("double0", new Double[]{5.0d, 1.0d, 1.5d, -1.5d});
+        doc3.put("double1", 4.0d);
+
         indexRandom(true,
-                client().prepareIndex("test", "doc", "1").setSource("double0", "5.0", "double0", "1.0", "double0", "1.5", "double1", "1.2", "double1", "2.4", "double2", "3.0"),
-                client().prepareIndex("test", "doc", "2").setSource("double0", "5.0", "double1", "3.0"),
-                client().prepareIndex("test", "doc", "3").setSource("double0", "5.0", "double0", "1.0", "double0", "1.5", "double0", "-1.5", "double1", "4.0"));
+                client().prepareIndex("test", "doc", "1").setSource(doc1),
+                client().prepareIndex("test", "doc", "2").setSource(doc2),
+                client().prepareIndex("test", "doc", "3").setSource(doc3));
 
 
         SearchResponse rsp = buildRequest("doc['double0'].count() + doc['double1'].count()").get();
@@ -234,7 +270,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
         assertEquals(2.5, hits.getAt(0).field("foo").getValue(), 0.0D);
         assertEquals(5.0, hits.getAt(1).field("foo").getValue(), 0.0D);
         assertEquals(1.5, hits.getAt(2).field("foo").getValue(), 0.0D);
-        
+
         // make sure count() works for missing
         rsp = buildRequest("doc['double2'].count()").get();
         assertSearchResponse(rsp);
@@ -243,7 +279,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
         assertEquals(1.0, hits.getAt(0).field("foo").getValue(), 0.0D);
         assertEquals(0.0, hits.getAt(1).field("foo").getValue(), 0.0D);
         assertEquals(0.0, hits.getAt(2).field("foo").getValue(), 0.0D);
-        
+
         // make sure .empty works in the same way
         rsp = buildRequest("doc['double2'].empty ? 5.0 : 2.0").get();
         assertSearchResponse(rsp);
@@ -286,7 +322,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
     public void testMissingField() throws Exception {
         createIndex("test");
         ensureGreen("test");
-        client().prepareIndex("test", "doc", "1").setSource("x", 4).setRefresh(true).get();
+        client().prepareIndex("test", "doc", "1").setSource("x", 4).setRefreshPolicy(IMMEDIATE).get();
         try {
             buildRequest("doc['bogus']").get();
             fail("Expected missing field to cause failure");
@@ -316,7 +352,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
     }
 
     public void testCompileFailure() {
-        client().prepareIndex("test", "doc", "1").setSource("x", 1).setRefresh(true).get();
+        client().prepareIndex("test", "doc", "1").setSource("x", 1).setRefreshPolicy(IMMEDIATE).get();
         try {
             buildRequest("garbage%@#%@").get();
             fail("Expected expression compilation failure");
@@ -324,12 +360,12 @@ public class MoreExpressionTests extends ESIntegTestCase {
             assertThat(e.toString() + "should have contained ScriptException",
                     e.toString().contains("ScriptException"), equalTo(true));
             assertThat(e.toString() + "should have contained compilation failure",
-                    e.toString().contains("Failed to parse expression"), equalTo(true));
+                    e.toString().contains("compile error"), equalTo(true));
         }
     }
 
     public void testNonNumericParam() {
-        client().prepareIndex("test", "doc", "1").setSource("x", 1).setRefresh(true).get();
+        client().prepareIndex("test", "doc", "1").setSource("x", 1).setRefreshPolicy(IMMEDIATE).get();
         try {
             buildRequest("a", "a", "astring").get();
             fail("Expected string parameter to cause failure");
@@ -342,7 +378,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
     }
 
     public void testNonNumericField() {
-        client().prepareIndex("test", "doc", "1").setSource("text", "this is not a number").setRefresh(true).get();
+        client().prepareIndex("test", "doc", "1").setSource("text", "this is not a number").setRefreshPolicy(IMMEDIATE).get();
         try {
             buildRequest("doc['text.keyword']").get();
             fail("Expected text field to cause execution failure");
@@ -355,7 +391,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
     }
 
     public void testInvalidGlobalVariable() {
-        client().prepareIndex("test", "doc", "1").setSource("foo", 5).setRefresh(true).get();
+        client().prepareIndex("test", "doc", "1").setSource("foo", 5).setRefreshPolicy(IMMEDIATE).get();
         try {
             buildRequest("bogus").get();
             fail("Expected bogus variable to cause execution failure");
@@ -368,7 +404,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
     }
 
     public void testDocWithoutField() {
-        client().prepareIndex("test", "doc", "1").setSource("foo", 5).setRefresh(true).get();
+        client().prepareIndex("test", "doc", "1").setSource("foo", 5).setRefreshPolicy(IMMEDIATE).get();
         try {
             buildRequest("doc").get();
             fail("Expected doc variable without field to cause execution failure");
@@ -381,7 +417,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
     }
 
     public void testInvalidFieldMember() {
-        client().prepareIndex("test", "doc", "1").setSource("foo", 5).setRefresh(true).get();
+        client().prepareIndex("test", "doc", "1").setSource("foo", 5).setRefreshPolicy(IMMEDIATE).get();
         try {
             buildRequest("doc['foo'].bogus").get();
             fail("Expected bogus field member to cause execution failure");
@@ -406,13 +442,16 @@ public class MoreExpressionTests extends ESIntegTestCase {
         req.setQuery(QueryBuilders.matchAllQuery())
                 .addAggregation(
                         AggregationBuilders.stats("int_agg").field("x")
-                                .script(new Script("_value * 3", ScriptType.INLINE, ExpressionScriptEngineService.NAME, null)))
+                                .script(new Script(ScriptType.INLINE,
+                                    ExpressionScriptEngine.NAME, "_value * 3", Collections.emptyMap())))
                 .addAggregation(
                         AggregationBuilders.stats("double_agg").field("y")
-                                .script(new Script("_value - 1.1", ScriptType.INLINE, ExpressionScriptEngineService.NAME, null)))
+                                .script(new Script(ScriptType.INLINE,
+                                    ExpressionScriptEngine.NAME, "_value - 1.1", Collections.emptyMap())))
                 .addAggregation(
                         AggregationBuilders.stats("const_agg").field("x") // specifically to test a script w/o _value
-                                .script(new Script("3.0", ScriptType.INLINE, ExpressionScriptEngineService.NAME, null))
+                                .script(new Script(ScriptType.INLINE,
+                                    ExpressionScriptEngine.NAME, "3.0", Collections.emptyMap()))
                 );
 
         SearchResponse rsp = req.get();
@@ -446,7 +485,8 @@ public class MoreExpressionTests extends ESIntegTestCase {
         req.setQuery(QueryBuilders.matchAllQuery())
                 .addAggregation(
                         AggregationBuilders.terms("term_agg").field("text")
-                                .script(new Script("_value", ScriptType.INLINE, ExpressionScriptEngineService.NAME, null)));
+                                .script(
+                                    new Script(ScriptType.INLINE, ExpressionScriptEngine.NAME, "_value", Collections.emptyMap())));
 
         String message;
         try {
@@ -473,9 +513,8 @@ public class MoreExpressionTests extends ESIntegTestCase {
         vars.put("xyz", -1);
 
         Expression expr = JavascriptCompiler.compile("a+b+xyz");
-        CompiledScript compiledScript = new CompiledScript(ScriptType.INLINE, "", "expression", expr);
 
-        ExpressionExecutableScript ees = new ExpressionExecutableScript(compiledScript, vars);
+        ExpressionExecutableScript ees = new ExpressionExecutableScript(expr, vars);
         assertEquals((Double) ees.run(), 4.5, 0.001);
 
         ees.setNextVar("b", -2.5);
@@ -491,10 +530,10 @@ public class MoreExpressionTests extends ESIntegTestCase {
         try {
             vars = new HashMap<>();
             vars.put("a", 1);
-            ees = new ExpressionExecutableScript(compiledScript, vars);
+            ees = new ExpressionExecutableScript(expr, vars);
             ees.run();
             fail("An incorrect number of variables were allowed to be used in an expression.");
-        } catch (ScriptException se) {
+        } catch (GeneralScriptException se) {
             message = se.getMessage();
             assertThat(message + " should have contained number of variables", message.contains("number of variables"), equalTo(true));
         }
@@ -504,10 +543,10 @@ public class MoreExpressionTests extends ESIntegTestCase {
             vars.put("a", 1);
             vars.put("b", 3);
             vars.put("c", -1);
-            ees = new ExpressionExecutableScript(compiledScript, vars);
+            ees = new ExpressionExecutableScript(expr, vars);
             ees.run();
             fail("A variable was allowed to be set that does not exist in the expression.");
-        } catch (ScriptException se) {
+        } catch (GeneralScriptException se) {
             message = se.getMessage();
             assertThat(message + " should have contained does not exist in", message.contains("does not exist in"), equalTo(true));
         }
@@ -517,10 +556,10 @@ public class MoreExpressionTests extends ESIntegTestCase {
             vars.put("a", 1);
             vars.put("b", 3);
             vars.put("xyz", "hello");
-            ees = new ExpressionExecutableScript(compiledScript, vars);
+            ees = new ExpressionExecutableScript(expr, vars);
             ees.run();
             fail("A non-number was allowed to be use in the expression.");
-        } catch (ScriptException se) {
+        } catch (GeneralScriptException se) {
             message = se.getMessage();
             assertThat(message + " should have contained process numbers", message.contains("process numbers"), equalTo(true));
         }
@@ -536,7 +575,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
             UpdateRequestBuilder urb = client().prepareUpdate().setIndex("test_index");
             urb.setType("doc");
             urb.setId("1");
-            urb.setScript(new Script("0", ScriptType.INLINE, ExpressionScriptEngineService.NAME, null));
+            urb.setScript(new Script(ScriptType.INLINE, ExpressionScriptEngine.NAME, "0", Collections.emptyMap()));
             urb.get();
             fail("Expression scripts should not be allowed to run as update scripts.");
         } catch (Exception e) {
@@ -567,14 +606,15 @@ public class MoreExpressionTests extends ESIntegTestCase {
                                 .subAggregation(sum("threeSum").field("three"))
                                 .subAggregation(sum("fourSum").field("four"))
                                 .subAggregation(bucketScript("totalSum",
-                                    new Script("_value0 + _value1 + _value2", ScriptType.INLINE, ExpressionScriptEngineService.NAME, null),
+                                    new Script(ScriptType.INLINE,
+                                        ExpressionScriptEngine.NAME, "_value0 + _value1 + _value2", Collections.emptyMap()),
                                     "twoSum", "threeSum", "fourSum")))
                 .execute().actionGet();
 
-        InternalHistogram<Bucket> histogram = response.getAggregations().get("histogram");
+        Histogram histogram = response.getAggregations().get("histogram");
         assertThat(histogram, notNullValue());
         assertThat(histogram.getName(), equalTo("histogram"));
-        List<Bucket> buckets = histogram.getBuckets();
+        List<? extends Histogram.Bucket> buckets = histogram.getBuckets();
 
         for (int bucketCount = 0; bucketCount < buckets.size(); ++bucketCount) {
             Histogram.Bucket bucket = buckets.get(bucketCount);
@@ -593,7 +633,7 @@ public class MoreExpressionTests extends ESIntegTestCase {
             }
         }
     }
-    
+
     public void testGeo() throws Exception {
         XContentBuilder xContentBuilder = XContentFactory.jsonBuilder().startObject().startObject("type1")
                 .startObject("properties").startObject("location").field("type", "geo_point");
@@ -626,12 +666,12 @@ public class MoreExpressionTests extends ESIntegTestCase {
         assertEquals(1, rsp.getHits().getTotalHits());
         assertEquals(3170D, rsp.getHits().getAt(0).field("foo").getValue(), 50D);
     }
-    
+
     public void testBoolean() throws Exception {
-        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder().startObject().startObject("type1")
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder().startObject().startObject("doc")
                 .startObject("properties").startObject("vip").field("type", "boolean");
         xContentBuilder.endObject().endObject().endObject().endObject();
-        assertAcked(prepareCreate("test").addMapping("type1", xContentBuilder));
+        assertAcked(prepareCreate("test").addMapping("doc", xContentBuilder));
         ensureGreen();
         indexRandom(true,
                 client().prepareIndex("test", "doc", "1").setSource("price", 1.0, "vip", true),
@@ -659,5 +699,20 @@ public class MoreExpressionTests extends ESIntegTestCase {
         assertEquals(0.5D, rsp.getHits().getAt(0).field("foo").getValue(), 1.0D);
         assertEquals(2.0D, rsp.getHits().getAt(1).field("foo").getValue(), 1.0D);
         assertEquals(2.0D, rsp.getHits().getAt(2).field("foo").getValue(), 1.0D);
+    }
+
+    public void testFilterScript() throws Exception {
+        createIndex("test");
+        ensureGreen("test");
+        indexRandom(true,
+            client().prepareIndex("test", "doc", "1").setSource("foo", 1.0),
+            client().prepareIndex("test", "doc", "2").setSource("foo", 0.0));
+        SearchRequestBuilder builder = buildRequest("doc['foo'].value");
+        Script script = new Script(ScriptType.INLINE, "expression", "doc['foo'].value", Collections.emptyMap());
+        builder.setQuery(QueryBuilders.boolQuery().filter(QueryBuilders.scriptQuery(script)));
+        SearchResponse rsp = builder.get();
+        assertSearchResponse(rsp);
+        assertEquals(1, rsp.getHits().getTotalHits());
+        assertEquals(1.0D, rsp.getHits().getAt(0).field("foo").getValue(), 0.0D);
     }
 }

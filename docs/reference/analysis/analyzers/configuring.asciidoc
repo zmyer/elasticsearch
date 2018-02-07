@@ -21,7 +21,7 @@ PUT my_index
     }
   },
   "mappings": {
-    "my_type": {
+    "_doc": {
       "properties": {
         "my_text": {
           "type":     "text",
@@ -37,8 +37,6 @@ PUT my_index
     }
   }
 }
-
-GET _cluster/health?wait_for_status=yellow
 
 POST my_index/_analyze
 {
@@ -98,4 +96,3 @@ POST my_index/_analyze
 // TESTRESPONSE
 
 /////////////////////
-

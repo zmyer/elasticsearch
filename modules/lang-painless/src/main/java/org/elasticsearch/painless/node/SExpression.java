@@ -19,38 +19,49 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Sort;
-import org.elasticsearch.painless.Variables;
+import org.elasticsearch.painless.Globals;
+import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Represents the top-level node for an expression as a statement.
  */
 public final class SExpression extends AStatement {
 
-    AExpression expression;
+    private AExpression expression;
 
-    public SExpression(int line, String location, AExpression expression) {
-        super(line, location);
+    public SExpression(Location location, AExpression expression) {
+        super(location);
 
-        this.expression = expression;
+        this.expression = Objects.requireNonNull(expression);
     }
 
     @Override
-    void analyze(Variables variables) {
-        expression.read = lastSource;
-        expression.analyze(variables);
+    void extractVariables(Set<String> variables) {
+        expression.extractVariables(variables);
+    }
+
+    @Override
+    void analyze(Locals locals) {
+        Class<?> rtnType = locals.getReturnType();
+        boolean isVoid = rtnType == void.class;
+
+        expression.read = lastSource && !isVoid;
+        expression.analyze(locals);
 
         if (!lastSource && !expression.statement) {
-            throw new IllegalArgumentException(error("Not a statement."));
+            throw createError(new IllegalArgumentException("Not a statement."));
         }
 
-        final boolean rtn = lastSource && expression.actual.sort != Sort.VOID;
+        boolean rtn = lastSource && !isVoid && expression.actual != void.class;
 
-        expression.expected = rtn ? Definition.OBJECT_TYPE : expression.actual;
+        expression.expected = rtn ? rtnType : expression.actual;
         expression.internal = rtn;
-        expression = expression.cast(variables);
+        expression = expression.cast(locals);
 
         methodEscape = rtn;
         loopEscape = rtn;
@@ -59,14 +70,19 @@ public final class SExpression extends AStatement {
     }
 
     @Override
-    void write(MethodWriter adapter) {
-        writeDebugInfo(adapter);
-        expression.write(adapter);
+    void write(MethodWriter writer, Globals globals) {
+        writer.writeStatementOffset(location);
+        expression.write(writer, globals);
 
         if (methodEscape) {
-            adapter.returnValue();
+            writer.returnValue();
         } else {
-            adapter.writePop(expression.expected.sort.size);
+            writer.writePop(MethodWriter.getType(expression.expected).getSize());
         }
+    }
+
+    @Override
+    public String toString() {
+        return singleLineToString(expression);
     }
 }

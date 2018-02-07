@@ -20,19 +20,20 @@
 package org.elasticsearch.repositories.gcs;
 
 import com.google.api.services.storage.Storage;
-import org.elasticsearch.common.blobstore.gcs.MockHttpTransport;
-import org.elasticsearch.common.inject.Module;
+import org.elasticsearch.cluster.metadata.RepositoryMetaData;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.plugin.repository.gcs.GoogleCloudStorageModule;
-import org.elasticsearch.plugin.repository.gcs.GoogleCloudStoragePlugin;
+import org.elasticsearch.env.Environment;
 import org.elasticsearch.plugins.Plugin;
-import org.elasticsearch.repositories.ESBlobStoreRepositoryIntegTestCase;
+import org.elasticsearch.repositories.blobstore.ESBlobStoreRepositoryIntegTestCase;
 import org.junit.BeforeClass;
 
+import java.net.SocketPermission;
+import java.security.AccessController;
+import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
@@ -47,7 +48,7 @@ public class GoogleCloudStorageBlobStoreRepositoryTests extends ESBlobStoreRepos
 
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
-        return pluginList(MockGoogleCloudStoragePlugin.class);
+        return Arrays.asList(MockGoogleCloudStoragePlugin.class);
     }
 
     @Override
@@ -68,29 +69,60 @@ public class GoogleCloudStorageBlobStoreRepositoryTests extends ESBlobStoreRepos
     }
 
     public static class MockGoogleCloudStoragePlugin extends GoogleCloudStoragePlugin {
-
         public MockGoogleCloudStoragePlugin() {
+            super(Settings.EMPTY);
         }
-
         @Override
-        public Collection<Module> nodeModules() {
-            return Collections.singletonList(new MockGoogleCloudStorageModule());
-        }
-    }
-
-    public static class MockGoogleCloudStorageModule extends GoogleCloudStorageModule {
-        @Override
-        protected void configure() {
-            bind(GoogleCloudStorageService.class).to(MockGoogleCloudStorageService.class).asEagerSingleton();
+        protected GoogleCloudStorageService createStorageService(Environment environment) {
+            return new MockGoogleCloudStorageService();
         }
     }
 
     public static class MockGoogleCloudStorageService implements GoogleCloudStorageService {
-
         @Override
-        public Storage createClient(String serviceAccount, String application, TimeValue connectTimeout, TimeValue readTimeout) throws
-                Exception {
+        public Storage createClient(String accountName, String application,
+                                    TimeValue connectTimeout, TimeValue readTimeout) throws Exception {
+            // The actual impl might open a connection. So check we have permission when this call is made.
+            AccessController.checkPermission(new SocketPermission("*", "connect"));
             return storage.get();
         }
+    }
+
+    public void testChunkSize() {
+        // default chunk size
+        RepositoryMetaData repositoryMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE, Settings.EMPTY);
+        ByteSizeValue chunkSize = GoogleCloudStorageRepository.getSetting(GoogleCloudStorageRepository.CHUNK_SIZE, repositoryMetaData);
+        assertEquals(GoogleCloudStorageRepository.MAX_CHUNK_SIZE, chunkSize);
+
+        // chunk size in settings
+        int size = randomIntBetween(1, 100);
+        repositoryMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
+                                                       Settings.builder().put("chunk_size", size + "mb").build());
+        chunkSize = GoogleCloudStorageRepository.getSetting(GoogleCloudStorageRepository.CHUNK_SIZE, repositoryMetaData);
+        assertEquals(new ByteSizeValue(size, ByteSizeUnit.MB), chunkSize);
+
+        // zero bytes is not allowed
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> {
+            RepositoryMetaData repoMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
+                                                                        Settings.builder().put("chunk_size", "0").build());
+            GoogleCloudStorageRepository.getSetting(GoogleCloudStorageRepository.CHUNK_SIZE, repoMetaData);
+        });
+        assertEquals("Failed to parse value [0] for setting [chunk_size] must be >= 1b", e.getMessage());
+
+        // negative bytes not allowed
+        e = expectThrows(IllegalArgumentException.class, () -> {
+            RepositoryMetaData repoMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
+                                                                        Settings.builder().put("chunk_size", "-1").build());
+            GoogleCloudStorageRepository.getSetting(GoogleCloudStorageRepository.CHUNK_SIZE, repoMetaData);
+        });
+        assertEquals("Failed to parse value [-1] for setting [chunk_size] must be >= 1b", e.getMessage());
+
+        // greater than max chunk size not allowed
+        e = expectThrows(IllegalArgumentException.class, () -> {
+            RepositoryMetaData repoMetaData = new RepositoryMetaData("repo", GoogleCloudStorageRepository.TYPE,
+                                                                        Settings.builder().put("chunk_size", "101mb").build());
+            GoogleCloudStorageRepository.getSetting(GoogleCloudStorageRepository.CHUNK_SIZE, repoMetaData);
+        });
+        assertEquals("Failed to parse value [101mb] for setting [chunk_size] must be <= 100mb", e.getMessage());
     }
 }

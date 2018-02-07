@@ -19,67 +19,96 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition.Sort;
-import org.elasticsearch.painless.Variables;
-import org.elasticsearch.painless.Variables.Variable;
-import org.objectweb.asm.Opcodes;
+import org.elasticsearch.painless.Definition;
+import org.elasticsearch.painless.Definition.Type;
+import org.elasticsearch.painless.Globals;
+import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Locals.Variable;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.objectweb.asm.Opcodes;
+
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Represents a single variable declaration.
  */
 public final class SDeclaration extends AStatement {
 
-    final String type;
-    final String name;
-    AExpression expression;
+    private final String type;
+    private final String name;
+    private AExpression expression;
 
-    Variable variable;
+    private Variable variable = null;
 
-    public SDeclaration(int line, String location, String type, String name, AExpression expression) {
-        super(line, location);
+    public SDeclaration(Location location, String type, String name, AExpression expression) {
+        super(location);
 
-        this.type = type;
-        this.name = name;
+        this.type = Objects.requireNonNull(type);
+        this.name = Objects.requireNonNull(name);
         this.expression = expression;
     }
 
     @Override
-    void analyze(Variables variables) {
-        variable = variables.addVariable(location, type, name, false, false);
+    void extractVariables(Set<String> variables) {
+        variables.add(name);
 
         if (expression != null) {
-            expression.expected = variable.type;
-            expression.analyze(variables);
-            expression = expression.cast(variables);
+            expression.extractVariables(variables);
         }
     }
 
     @Override
-    void write(MethodWriter adapter) {
-        writeDebugInfo(adapter);
-        final org.objectweb.asm.Type type = variable.type.type;
-        final Sort sort = variable.type.sort;
+    void analyze(Locals locals) {
+        Class<?> clazz;
 
-        final boolean initialize = expression == null;
-
-        if (!initialize) {
-            expression.write(adapter);
+        try {
+            clazz = Definition.TypeToClass(locals.getDefinition().getType(this.type));
+        } catch (IllegalArgumentException exception) {
+            throw createError(new IllegalArgumentException("Not a type [" + this.type + "]."));
         }
 
-        switch (sort) {
-            case VOID:   throw new IllegalStateException(error("Illegal tree structure."));
-            case BOOL:
-            case BYTE:
-            case SHORT:
-            case CHAR:
-            case INT:    if (initialize) adapter.push(0);    break;
-            case LONG:   if (initialize) adapter.push(0L);   break;
-            case FLOAT:  if (initialize) adapter.push(0.0F); break;
-            case DOUBLE: if (initialize) adapter.push(0.0);  break;
-            default:     if (initialize) adapter.visitInsn(Opcodes.ACONST_NULL);
+        if (expression != null) {
+            expression.expected = clazz;
+            expression.analyze(locals);
+            expression = expression.cast(locals);
         }
 
-        adapter.visitVarInsn(type.getOpcode(Opcodes.ISTORE), variable.slot);
+        variable = locals.addVariable(location, clazz, name, false);
+    }
+
+    @Override
+    void write(MethodWriter writer, Globals globals) {
+        writer.writeStatementOffset(location);
+
+        if (expression == null) {
+            Class<?> sort = variable.clazz;
+
+            if (sort == void.class || sort == boolean.class || sort == byte.class ||
+                sort == short.class || sort == char.class || sort == int.class) {
+                writer.push(0);
+            } else if (sort == long.class) {
+                writer.push(0L);
+            } else if (sort == float.class) {
+                writer.push(0F);
+            } else if (sort == double.class) {
+                writer.push(0D);
+            } else {
+                writer.visitInsn(Opcodes.ACONST_NULL);
+            }
+        } else {
+            expression.write(writer, globals);
+        }
+
+        writer.visitVarInsn(MethodWriter.getType(variable.clazz).getOpcode(Opcodes.ISTORE), variable.getSlot());
+    }
+
+    @Override
+    public String toString() {
+        if (expression == null) {
+            return singleLineToString(type, name);
+        }
+        return singleLineToString(type, name, expression);
     }
 }

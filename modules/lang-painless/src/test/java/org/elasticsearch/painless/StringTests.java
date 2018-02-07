@@ -19,9 +19,14 @@
 
 package org.elasticsearch.painless;
 
-import static org.elasticsearch.painless.WriterConstants.MAX_INDY_STRING_CONCAT_ARGS;
+import org.apache.lucene.util.Constants;
 
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
+
+import static java.util.Collections.singletonMap;
+import static org.elasticsearch.painless.WriterConstants.MAX_INDY_STRING_CONCAT_ARGS;
 
 public class StringTests extends ScriptTestCase {
 
@@ -162,32 +167,95 @@ public class StringTests extends ScriptTestCase {
         assertEquals('c', exec("String s = \"c\"; (char)s"));
         assertEquals('c', exec("String s = 'c'; (char)s"));
 
-        try {
+        ClassCastException expected = expectScriptThrows(ClassCastException.class, false, () -> {
             assertEquals("cc", exec("return (String)(char)\"cc\""));
-            fail();
-        } catch (final ClassCastException cce) {
-            assertTrue(cce.getMessage().contains("Cannot cast [String] with length greater than one to [char]."));
-        }
+        });
+        assertTrue(expected.getMessage().contains("Cannot cast [String] with length greater than one to [char]."));
 
-        try {
+        expected = expectScriptThrows(ClassCastException.class, false, () -> {
             assertEquals("cc", exec("return (String)(char)'cc'"));
-            fail();
-        } catch (final ClassCastException cce) {
-            assertTrue(cce.getMessage().contains("Cannot cast [String] with length greater than one to [char]."));
-        }
+        });
+        assertTrue(expected.getMessage().contains("Cannot cast [String] with length greater than one to [char]."));
 
-        try {
+        expected = expectScriptThrows(ClassCastException.class, () -> {
             assertEquals('c', exec("String s = \"cc\"; (char)s"));
-            fail();
-        } catch (final ClassCastException cce) {
-            assertTrue(cce.getMessage().contains("Cannot cast [String] with length greater than one to [char]."));
-        }
+        });
+        assertTrue(expected.getMessage().contains("Cannot cast [String] with length greater than one to [char]."));
 
-        try {
+        expected = expectScriptThrows(ClassCastException.class, () -> {
             assertEquals('c', exec("String s = 'cc'; (char)s"));
-            fail();
-        } catch (final ClassCastException cce) {
-            assertTrue(cce.getMessage().contains("Cannot cast [String] with length greater than one to [char]."));
-        }
+        });
+        assertTrue(expected.getMessage().contains("Cannot cast [String] with length greater than one to [char]."));
+    }
+
+    public void testDefConcat() {
+        assertEquals("a" + (byte)2, exec("def x = 'a'; def y = (byte)2; return x + y"));
+        assertEquals("a" + (short)2, exec("def x = 'a'; def y = (short)2; return x + y"));
+        assertEquals("a" + (char)2, exec("def x = 'a'; def y = (char)2; return x + y"));
+        assertEquals("a" + 2, exec("def x = 'a'; def y = (int)2; return x + y"));
+        assertEquals("a" + 2L, exec("def x = 'a'; def y = (long)2; return x + y"));
+        assertEquals("a" + 2F, exec("def x = 'a'; def y = (float)2; return x + y"));
+        assertEquals("a" + 2D, exec("def x = 'a'; def y = (double)2; return x + y"));
+        assertEquals("ab", exec("def x = 'a'; def y = 'b'; return x + y"));
+        assertEquals((byte)2 + "a", exec("def x = 'a'; def y = (byte)2; return y + x"));
+        assertEquals((short)2 + "a", exec("def x = 'a'; def y = (short)2; return y + x"));
+        assertEquals((char)2 + "a", exec("def x = 'a'; def y = (char)2; return y + x"));
+        assertEquals(2 + "a", exec("def x = 'a'; def y = (int)2; return y + x"));
+        assertEquals(2L + "a", exec("def x = 'a'; def y = (long)2; return y + x"));
+        assertEquals(2F + "a", exec("def x = 'a'; def y = (float)2; return y + x"));
+        assertEquals(2D + "a", exec("def x = 'a'; def y = (double)2; return y + x"));
+        assertEquals("anull", exec("def x = 'a'; def y = null; return x + y"));
+        assertEquals("nullb", exec("def x = null; def y = 'b'; return x + y"));
+        expectScriptThrows(NullPointerException.class, () -> {
+            exec("def x = null; def y = null; return x + y");
+        });
+    }
+
+    public void testDefCompoundAssignment() {
+        assertEquals("a" + (byte)2, exec("def x = 'a'; x += (byte)2; return x"));
+        assertEquals("a" + (short)2, exec("def x = 'a'; x  += (short)2; return x"));
+        assertEquals("a" + (char)2, exec("def x = 'a'; x += (char)2; return x"));
+        assertEquals("a" + 2, exec("def x = 'a'; x += (int)2; return x"));
+        assertEquals("a" + 2L, exec("def x = 'a'; x += (long)2; return x"));
+        assertEquals("a" + 2F, exec("def x = 'a'; x += (float)2; return x"));
+        assertEquals("a" + 2D, exec("def x = 'a'; x += (double)2; return x"));
+        assertEquals("ab", exec("def x = 'a'; def y = 'b'; x += y; return x"));
+        assertEquals("anull", exec("def x = 'a'; x += null; return x"));
+        assertEquals("nullb", exec("def x = null; x += 'b'; return x"));
+        expectScriptThrows(NullPointerException.class, () -> {
+            exec("def x = null; def y = null; x += y");
+        });
+    }
+
+    public void testComplexCompoundAssignment() {
+        Map<String, Object> params = new HashMap<>();
+        Map<String, Object> ctx = new HashMap<>();
+        ctx.put("_id", "somerandomid");
+        params.put("ctx", ctx);
+
+        assertEquals("somerandomid.somerandomid", exec("ctx._id += '.' + ctx._id", params, false));
+        assertEquals("somerandomid.somerandomid", exec("String x = 'somerandomid'; x += '.' + x"));
+        assertEquals("somerandomid.somerandomid", exec("def x = 'somerandomid'; x += '.' + x"));
+    }
+
+    public void testAppendStringIntoMap() {
+        assertEquals("nullcat", exec("def a = new HashMap(); a.cat += 'cat'"));
+    }
+
+    public void testBase64Augmentations() {
+        assertEquals("Y2F0", exec("'cat'.encodeBase64()"));
+        assertEquals("cat", exec("'Y2F0'.decodeBase64()"));
+        assertEquals("6KiA6Kqe", exec("'\u8A00\u8A9E'.encodeBase64()"));
+        assertEquals("\u8A00\u8A9E", exec("'6KiA6Kqe'.decodeBase64()"));
+
+        String rando = randomRealisticUnicodeOfLength(between(5, 1000));
+        assertEquals(rando, exec("params.rando.encodeBase64().decodeBase64()", singletonMap("rando", rando), true));
+    }
+    
+    public void testJava9StringConcatBytecode() {
+        assumeTrue("Needs Java 9 to test indified String concat", Constants.JRE_IS_MINIMUM_JAVA9);
+        assertNotNull(WriterConstants.INDY_STRING_CONCAT_BOOTSTRAP_HANDLE);
+        assertBytecodeExists("String s = \"cat\"; return s + true + 'abc' + null;", 
+                "INVOKEDYNAMIC concat(Ljava/lang/String;ZLjava/lang/String;Ljava/lang/Object;)Ljava/lang/String;");
     }
 }

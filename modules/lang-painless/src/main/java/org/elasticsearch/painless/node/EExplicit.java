@@ -20,48 +20,63 @@
 package org.elasticsearch.painless.node;
 
 import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Variables;
+import org.elasticsearch.painless.Globals;
+import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Represents an explicit cast.
  */
 public final class EExplicit extends AExpression {
 
-    final String type;
-    AExpression child;
+    private final String type;
+    private AExpression child;
 
-    public EExplicit(int line, String location, String type, AExpression child) {
-        super(line, location);
+    public EExplicit(Location location, String type, AExpression child) {
+        super(location);
 
-        this.type = type;
-        this.child = child;
+        this.type = Objects.requireNonNull(type);
+        this.child = Objects.requireNonNull(child);
     }
 
     @Override
-    void analyze(Variables variables) {
+    void extractVariables(Set<String> variables) {
+        child.extractVariables(variables);
+    }
+
+    @Override
+    void analyze(Locals locals) {
         try {
-            actual = Definition.getType(this.type);
-        } catch (final IllegalArgumentException exception) {
-            throw new IllegalArgumentException(error("Not a type [" + this.type + "]."));
+            actual = Definition.TypeToClass(locals.getDefinition().getType(type));
+        } catch (IllegalArgumentException exception) {
+            throw createError(new IllegalArgumentException("Not a type [" + type + "]."));
         }
 
         child.expected = actual;
         child.explicit = true;
-        child.analyze(variables);
-        child = child.cast(variables);
+        child.analyze(locals);
+        child = child.cast(locals);
     }
 
     @Override
-    void write(MethodWriter adapter) {
-        throw new IllegalArgumentException(error("Illegal tree structure."));
+    void write(MethodWriter writer, Globals globals) {
+        throw createError(new IllegalStateException("Illegal tree structure."));
     }
 
-    AExpression cast(Variables variables) {
+    AExpression cast(Locals locals) {
         child.expected = expected;
         child.explicit = explicit;
         child.internal = internal;
 
-        return child.cast(variables);
+        return child.cast(locals);
+    }
+
+    @Override
+    public String toString() {
+        return singleLineToString(type, child);
     }
 }

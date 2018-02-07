@@ -22,6 +22,7 @@ package org.elasticsearch.index.analysis;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 
 import org.apache.lucene.analysis.TokenStream;
 import org.elasticsearch.common.io.Streams;
@@ -46,7 +47,6 @@ public class IcuCollationTokenFilterFactory extends AbstractTokenFilterFactory {
 
     private final Collator collator;
 
-    @SuppressWarnings("deprecation") // Intentionally sets deprecated options for backwards compatibility
     public IcuCollationTokenFilterFactory(IndexSettings indexSettings, Environment environment, String name, Settings settings) {
         super(indexSettings, name, settings);
 
@@ -56,7 +56,7 @@ public class IcuCollationTokenFilterFactory extends AbstractTokenFilterFactory {
             Exception failureToResolve = null;
             try {
                 rules = Streams.copyToString(Files.newBufferedReader(environment.configFile().resolve(rules), Charset.forName("UTF-8")));
-            } catch (IOException | SecurityException e) {
+            } catch (IOException | SecurityException | InvalidPathException e) {
                 failureToResolve = e;
             }
             try {
@@ -85,7 +85,7 @@ public class IcuCollationTokenFilterFactory extends AbstractTokenFilterFactory {
                 }
                 collator = Collator.getInstance(locale);
             } else {
-                collator = Collator.getInstance();
+                collator = Collator.getInstance(ULocale.ROOT);
             }
         }
 
@@ -167,7 +167,6 @@ public class IcuCollationTokenFilterFactory extends AbstractTokenFilterFactory {
     }
 
     @Override
-    @SuppressWarnings("deprecation") // Constructs a deprecated filter for backwards compatibility
     public TokenStream create(TokenStream tokenStream) {
         return new ICUCollationKeyFilter(tokenStream, collator);
     }

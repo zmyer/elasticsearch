@@ -19,39 +19,50 @@
 
 package org.elasticsearch.painless.node;
 
+import org.elasticsearch.painless.Definition;
 import org.elasticsearch.painless.Definition.Cast;
-import org.elasticsearch.painless.Variables;
+import org.elasticsearch.painless.Globals;
+import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
 
+import java.util.Objects;
+import java.util.Set;
+
 /**
- * Represents an implicit cast in most cases, though it will replace
- * explicit casts in the tree for simplicity.  (Internal only.)
+ * Represents a cast that is inserted into the tree replacing other casts.  (Internal only.)
  */
 final class ECast extends AExpression {
 
-    final String type;
-    AExpression child;
+    private AExpression child;
+    private final Cast cast;
 
-    Cast cast = null;
+    ECast(Location location, AExpression child, Cast cast) {
+        super(location);
 
-    ECast(int line, String location, AExpression child, Cast cast) {
-        super(line, location);
-
-        this.type = null;
-        this.child = child;
-
-        this.cast = cast;
+        this.child = Objects.requireNonNull(child);
+        this.cast = Objects.requireNonNull(cast);
     }
 
     @Override
-    void analyze(Variables variables) {
-        throw new IllegalStateException(error("Illegal tree structure."));
+    void extractVariables(Set<String> variables) {
+        throw new IllegalStateException("Illegal tree structure.");
     }
 
     @Override
-    void write(MethodWriter adapter) {
-        child.write(adapter);
-        adapter.writeCast(cast);
-        adapter.writeBranch(tru, fals);
+    void analyze(Locals locals) {
+        throw createError(new IllegalStateException("Illegal tree structure."));
+    }
+
+    @Override
+    void write(MethodWriter writer, Globals globals) {
+        child.write(writer, globals);
+        writer.writeDebugInfo(location);
+        writer.writeCast(cast);
+    }
+
+    @Override
+    public String toString() {
+        return singleLineToString(Definition.ClassToName(cast.to), child);
     }
 }

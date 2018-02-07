@@ -19,50 +19,68 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Variables;
-import org.objectweb.asm.Label;
+import org.elasticsearch.painless.Globals;
+import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.Opcodes;
+
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Represents a do-while loop.
  */
 public final class SDo extends AStatement {
 
-    final AStatement block;
-    AExpression condition;
-    final int maxLoopCounter;
+    private final SBlock block;
+    private AExpression condition;
 
-    public SDo(int line, String location, AStatement block, AExpression condition, int maxLoopCounter) {
-        super(line, location);
+    private boolean continuous = false;
 
-        this.condition = condition;
+    public SDo(Location location, SBlock block, AExpression condition) {
+        super(location);
+
+        this.condition = Objects.requireNonNull(condition);
         this.block = block;
-        this.maxLoopCounter = maxLoopCounter;
     }
 
     @Override
-    void analyze(Variables variables) {
-        variables.incrementScope();
+    void extractVariables(Set<String> variables) {
+        condition.extractVariables(variables);
+
+        if (block != null) {
+            block.extractVariables(variables);
+        }
+    }
+
+    @Override
+    void analyze(Locals locals) {
+        locals = Locals.newLocalScope(locals);
+
+        if (block == null) {
+            throw createError(new IllegalArgumentException("Extraneous do while loop."));
+        }
 
         block.beginLoop = true;
         block.inLoop = true;
 
-        block.analyze(variables);
+        block.analyze(locals);
 
         if (block.loopEscape && !block.anyContinue) {
-            throw new IllegalArgumentException(error("Extraneous do while loop."));
+            throw createError(new IllegalArgumentException("Extraneous do while loop."));
         }
 
-        condition.expected = Definition.BOOLEAN_TYPE;
-        condition.analyze(variables);
-        condition = condition.cast(variables);
+        condition.expected = boolean.class;
+        condition.analyze(locals);
+        condition = condition.cast(locals);
 
         if (condition.constant != null) {
-            final boolean continuous = (boolean)condition.constant;
+            continuous = (boolean)condition.constant;
 
             if (!continuous) {
-                throw new IllegalArgumentException(error("Extraneous do while loop."));
+                throw createError(new IllegalArgumentException("Extraneous do while loop."));
             }
 
             if (!block.anyBreak) {
@@ -73,34 +91,42 @@ public final class SDo extends AStatement {
 
         statementCount = 1;
 
-        if (maxLoopCounter > 0) {
-            loopCounterSlot = variables.getVariable(location, "#loop").slot;
+        if (locals.hasVariable(Locals.LOOP)) {
+            loopCounter = locals.getVariable(location, Locals.LOOP);
         }
-
-        variables.decrementScope();
     }
 
     @Override
-    void write(MethodWriter adapter) {
-        writeDebugInfo(adapter);
-        final Label start = new Label();
-        final Label begin = new Label();
-        final Label end = new Label();
+    void write(MethodWriter writer, Globals globals) {
+        writer.writeStatementOffset(location);
 
-        adapter.mark(start);
+        Label start = new Label();
+        Label begin = new Label();
+        Label end = new Label();
+
+        writer.mark(start);
 
         block.continu = begin;
         block.brake = end;
-        block.write(adapter);
+        block.write(writer, globals);
 
-        adapter.mark(begin);
+        writer.mark(begin);
 
-        condition.fals = end;
-        condition.write(adapter);
+        if (!continuous) {
+            condition.write(writer, globals);
+            writer.ifZCmp(Opcodes.IFEQ, end);
+        }
 
-        adapter.writeLoopCounter(loopCounterSlot, Math.max(1, block.statementCount));
+        if (loopCounter != null) {
+            writer.writeLoopCounter(loopCounter.getSlot(), Math.max(1, block.statementCount), location);
+        }
 
-        adapter.goTo(start);
-        adapter.mark(end);
+        writer.goTo(start);
+        writer.mark(end);
+    }
+
+    @Override
+    public String toString() {
+        return singleLineToString(condition, block);
     }
 }

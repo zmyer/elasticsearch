@@ -1,5 +1,8 @@
 package org.elasticsearch.painless;
 
+import java.util.ArrayList;
+import java.util.Collections;
+
 /*
  * Licensed to Elasticsearch under one or more contributor
  * license agreements. See the NOTICE file distributed with
@@ -20,6 +23,7 @@ package org.elasticsearch.painless;
  */
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class BasicStatementTests extends ScriptTestCase {
@@ -104,7 +108,11 @@ public class BasicStatementTests extends ScriptTestCase {
     }
 
     public void testForStatement() {
+        assertEquals(6, exec("int x, y; for (x = 0; x < 4; ++x) {y += x;} return y;"));
         assertEquals("aaaaaa", exec("String c = \"a\"; for (int x = 0; x < 5; ++x) c += \"a\"; return c;"));
+
+        assertEquals(6, exec("double test() { return 0.0; }" +
+            "int x, y; for (test(); x < 4; test()) {y += x; ++x;} return y;"));
 
         Object value = exec(
                 " int[][] b = new int[5][5];  \n" +
@@ -123,6 +131,70 @@ public class BasicStatementTests extends ScriptTestCase {
                 assertEquals(x*y, b[x][y]);
             }
         }
+    }
+
+    public void testIterableForEachStatement() {
+        assertEquals(6, exec("List l = new ArrayList(); l.add(1); l.add(2); l.add(3); int total = 0;" +
+            " for (int x : l) total += x; return total"));
+        assertEquals(6, exec("List l = new ArrayList(); l.add(1); l.add(2); l.add(3); int total = 0;" +
+            " for (x in l) total += x; return total"));
+        assertEquals("123", exec("List l = new ArrayList(); l.add('1'); l.add('2'); l.add('3'); String cat = '';" +
+            " for (String x : l) cat += x; return cat"));
+        assertEquals("123", exec("List l = new ArrayList(); l.add('1'); l.add('2'); l.add('3'); String cat = '';" +
+            " for (x in l) cat += x; return cat"));
+        assertEquals("1236", exec("Map m = new HashMap(); m.put('1', 1); m.put('2', 2); m.put('3', 3);" +
+            " String cat = ''; int total = 0;" +
+            " for (Map.Entry e : m.entrySet()) { cat += e.getKey(); total += e.getValue(); } return cat + total"));
+        assertEquals("1236", exec("Map m = new HashMap(); m.put('1', 1); m.put('2', 2); m.put('3', 3);" +
+                " String cat = ''; int total = 0;" +
+                " for (e in m.entrySet()) { cat += e.getKey(); total += e.getValue(); } return cat + total"));
+    }
+
+    public void testIterableForEachStatementDef() {
+        assertEquals(6, exec("def l = new ArrayList(); l.add(1); l.add(2); l.add(3); int total = 0;" +
+            " for (int x : l) total += x; return total"));
+        assertEquals(6, exec("def l = new ArrayList(); l.add(1); l.add(2); l.add(3); int total = 0;" +
+            " for (x in l) total += x; return total"));
+        assertEquals("123", exec("def l = new ArrayList(); l.add('1'); l.add('2'); l.add('3'); String cat = '';" +
+            " for (String x : l) cat += x; return cat"));
+        assertEquals("123", exec("def l = new ArrayList(); l.add('1'); l.add('2'); l.add('3'); String cat = '';" +
+            " for (x in l) cat += x; return cat"));
+        assertEquals("1236", exec("def m = new HashMap(); m.put('1', 1); m.put('2', 2); m.put('3', 3);" +
+            " String cat = ''; int total = 0;" +
+            " for (Map.Entry e : m.entrySet()) { cat += e.getKey(); total += e.getValue(); } return cat + total"));
+        assertEquals("1236", exec("def m = new HashMap(); m.put('1', 1); m.put('2', 2); m.put('3', 3);" +
+            " String cat = ''; int total = 0;" +
+            " for (e in m.entrySet()) { cat += e.getKey(); total += e.getValue(); } return cat + total"));
+    }
+
+    public void testArrayForEachStatement() {
+        assertEquals(6, exec("int[] a = new int[3]; a[0] = 1; a[1] = 2; a[2] = 3; int total = 0;" +
+            " for (int x : a) total += x; return total"));
+        assertEquals(6, exec("int[] a = new int[3]; a[0] = 1; a[1] = 2; a[2] = 3; int total = 0;" +
+            " for (x in a) total += x; return total"));
+        assertEquals("123", exec("String[] a = new String[3]; a[0] = '1'; a[1] = '2'; a[2] = '3'; def total = '';" +
+            " for (String x : a) total += x; return total"));
+        assertEquals("123", exec("String[] a = new String[3]; a[0] = '1'; a[1] = '2'; a[2] = '3'; def total = '';" +
+            " for (x in a) total += x; return total"));
+        assertEquals(6, exec("int[][] i = new int[3][1]; i[0][0] = 1; i[1][0] = 2; i[2][0] = 3; int total = 0;" +
+            " for (int[] j : i) total += j[0]; return total"));
+        assertEquals(6, exec("int[][] i = new int[3][1]; i[0][0] = 1; i[1][0] = 2; i[2][0] = 3; int total = 0;" +
+            " for (j in i) total += j[0]; return total"));
+    }
+
+    public void testArrayForEachStatementDef() {
+        assertEquals(6, exec("def a = new int[3]; a[0] = 1; a[1] = 2; a[2] = 3; int total = 0;" +
+            " for (int x : a) total += x; return total"));
+        assertEquals(6, exec("def a = new int[3]; a[0] = 1; a[1] = 2; a[2] = 3; int total = 0;" +
+            " for (x in a) total += x; return total"));
+        assertEquals("123", exec("def a = new String[3]; a[0] = '1'; a[1] = '2'; a[2] = '3'; def total = '';" +
+            " for (String x : a) total += x; return total"));
+        assertEquals("123", exec("def a = new String[3]; a[0] = '1'; a[1] = '2'; a[2] = '3'; def total = '';" +
+            " for (x in a) total += x; return total"));
+        assertEquals(6, exec("def i = new int[3][1]; i[0][0] = 1; i[1][0] = 2; i[2][0] = 3; int total = 0;" +
+            " for (int[] j : i) total += j[0]; return total"));
+        assertEquals(6, exec("def i = new int[3][1]; i[0][0] = 1; i[1][0] = 2; i[2][0] = 3; int total = 0;" +
+            " for (j in i) total += j[0]; return total"));
     }
 
     public void testDeclarationStatement() {
@@ -175,5 +247,229 @@ public class BasicStatementTests extends ScriptTestCase {
         assertEquals(4, exec("int[] x = new int[2]; x[1] = 4; return x[1];"));
         assertEquals(5, ((short[])exec("short[] s = new short[3]; s[1] = 5; return s;"))[1]);
         assertEquals(10, ((Map)exec("Map s = new HashMap(); s.put(\"x\", 10); return s;")).get("x"));
+    }
+
+    public void testLastInBlockDoesntNeedSemi() {
+        // One statement in the block in case that is a special case
+        assertEquals(10, exec("def i = 1; if (i == 1) {return 10}"));
+        assertEquals(10, exec("def i = 1; if (i == 1) {return 10} else {return 12}"));
+        // Two statements in the block, in case that is the general case
+        assertEquals(10, exec("def i = 1; if (i == 1) {i = 2; return 10}"));
+        assertEquals(10, exec("def i = 1; if (i == 1) {i = 2; return 10} else {return 12}"));
+    }
+
+    public void testArrayLoopWithoutCounter() {
+       assertEquals(6L, exec("long sum = 0; long[] array = new long[] { 1, 2, 3 };" +
+                              "for (int i = 0; i < array.length; i++) { sum += array[i] } return sum",
+                              Collections.emptyMap(),
+                              Collections.singletonMap(CompilerSettings.MAX_LOOP_COUNTER, "0"),
+                              null, true
+       ));
+       assertEquals(6L, exec("long sum = 0; long[] array = new long[] { 1, 2, 3 };" +
+                             "int i = 0; while (i < array.length) { sum += array[i++] } return sum",
+                             Collections.emptyMap(),
+                             Collections.singletonMap(CompilerSettings.MAX_LOOP_COUNTER, "0"),
+                             null, true
+       ));
+       assertEquals(6L, exec("long sum = 0; long[] array = new long[] { 1, 2, 3 };" +
+                             "int i = 0; do { sum += array[i++] } while (i < array.length); return sum",
+                             Collections.emptyMap(),
+                             Collections.singletonMap(CompilerSettings.MAX_LOOP_COUNTER, "0"),
+                             null, true
+       ));
+    }
+
+    // tests both single break and multiple breaks used in a script
+    public void testForWithBreak() {
+        // single break test
+        assertEquals(1, exec(
+            "Map settings = ['test1' : '1'];" +
+            "int i = 0;" +
+            "List keys = ['test0', 'test1', 'test2'];" +
+            "for (; i < keys.size(); ++i) {" +
+            "    if (settings.containsKey(keys[i])) {" +
+            "        break;" +
+            "    }" +
+            "}" +
+            "return i;"
+        ));
+
+        List<Integer> expected = new ArrayList<>();
+        expected.add(1);
+        expected.add(0);
+
+        // multiple breaks test
+        assertEquals(expected, exec(
+            "Map outer = ['test1' : '1'];" +
+            "Map inner = ['test0' : '2'];" +
+            "boolean found = false;" +
+            "int i = 0, j = 0;" +
+            "List keys = ['test0', 'test1', 'test2'];" +
+            "for (; i < keys.size(); ++i) {" +
+            "    if (outer.containsKey(keys[i])) {" +
+            "        for (; j < keys.size(); ++j) {" +
+            "            if (inner.containsKey(keys[j])) {" +
+            "                found = true;" +
+            "                break;" +
+            "            }" +
+            "        }" +
+            "        if (found) {" +
+            "            break;" +
+            "        }" +
+            "    }" +
+            "}" +
+            "[i, j];"
+        ));
+
+        expected.set(1, 3);
+
+        // multiple breaks test, ignore inner break
+        assertEquals(expected, exec(
+            "Map outer = ['test1' : '1'];" +
+            "Map inner = ['test3' : '2'];" +
+            "int i = 0, j = 0;" +
+            "boolean found = false;" +
+            "List keys = ['test0', 'test1', 'test2'];" +
+            "for (; i < keys.size(); ++i) {" +
+            "    if (outer.containsKey(keys[i])) {" +
+            "        for (; j < keys.size(); ++j) {" +
+            "            if (found) {" +
+            "                break;" +
+            "            }" +
+            "        }" +
+            "        found = true;" +
+            "        if (found) {" +
+            "            break;" +
+            "        }" +
+            "    }" +
+            "}" +
+            "[i, j];"
+        ));
+
+        expected.set(0, 3);
+        expected.set(1, 1);
+
+        // multiple breaks test, ignore outer break
+        assertEquals(expected, exec(
+            "Map outer = ['test3' : '1'];" +
+            "Map inner = ['test1' : '2'];" +
+            "int i = 0, j = 0;" +
+            "boolean found = false;" +
+            "List keys = ['test0', 'test1', 'test2'];" +
+            "for (; i < keys.size(); ++i) {" +
+            "    if (outer.containsKey('test3')) {" +
+            "        for (; j < keys.size(); ++j) {" +
+            "            if (inner.containsKey(keys[j])) {" +
+            "                break;" +
+            "            }" +
+            "        }" +
+            "        if (found) {" +
+            "            break;" +
+            "        }" +
+            "    }" +
+            "}" +
+            "[i, j];"
+        ));
+    }
+
+    // tests both single break and multiple breaks used in a script
+    public void testForEachWithBreak() {
+        // single break test
+        assertEquals(1, exec(
+            "Map settings = ['test1' : '1'];" +
+            "int i = 0;" +
+            "List keys = ['test0', 'test1', 'test2'];" +
+            "for (String key : keys) {" +
+            "    if (settings.containsKey(key)) {" +
+            "        break;" +
+            "    }" +
+            "    ++i;" +
+            "}" +
+            "return i;"
+        ));
+
+        List<Integer> expected = new ArrayList<>();
+        expected.add(1);
+        expected.add(0);
+
+        // multiple breaks test
+        assertEquals(expected, exec(
+            "Map outer = ['test1' : '1'];" +
+            "Map inner = ['test0' : '2'];" +
+            "int i = 0, j = 0;" +
+            "boolean found = false;" +
+            "List keys = ['test0', 'test1', 'test2'];" +
+            "for (String okey : keys) {" +
+            "    if (outer.containsKey(okey)) {" +
+            "        for (String ikey : keys) {" +
+            "            if (inner.containsKey(ikey)) {" +
+            "                found = true;" +
+            "                break;" +
+            "            }" +
+            "            ++j;" +
+            "        }" +
+            "        if (found) {" +
+            "            break;" +
+            "        }" +
+            "    }" +
+            "    ++i;" +
+            "}" +
+            "[i, j];"
+        ));
+
+        expected.set(0, 3);
+        expected.set(1, 1);
+
+        // multiple breaks test, ignore outer break
+        assertEquals(expected, exec(
+            "Map outer = ['test1' : '1'];" +
+            "Map inner = ['test1' : '1'];" +
+            "int i = 0, j = 0;" +
+            "boolean found = false;" +
+            "List keys = ['test0', 'test1', 'test2'];" +
+            "for (String okey : keys) {" +
+            "    if (outer.containsKey(okey)) {" +
+            "        for (String ikey : keys) {" +
+            "            if (inner.containsKey(ikey)) {" +
+            "                break;" +
+            "            }" +
+            "            ++j;" +
+            "        }" +
+            "        if (found) {" +
+            "            break;" +
+            "        }" +
+            "    }" +
+            "    ++i;" +
+            "}" +
+            "[i, j];"
+        ));
+
+        expected.set(0, 1);
+        expected.set(1, 3);
+
+        // multiple breaks test, ignore inner break
+        assertEquals(expected, exec(
+            "Map outer = ['test1' : '1'];" +
+            "Map inner = ['test1' : '1'];" +
+            "int i = 0, j = 0;" +
+            "boolean found = false;" +
+            "List keys = ['test0', 'test1', 'test2'];" +
+            "for (String okey : keys) {" +
+            "    if (outer.containsKey(okey)) {" +
+            "        for (String ikey : keys) {" +
+            "            if (found) {" +
+            "                break;" +
+            "            }" +
+            "            ++j;" +
+            "        }" +
+            "        found = true;" +
+            "        if (found) {" +
+            "            break;" +
+            "        }" +
+            "    }" +
+            "    ++i;" +
+            "}" +
+            "[i, j];"
+        ));
     }
 }

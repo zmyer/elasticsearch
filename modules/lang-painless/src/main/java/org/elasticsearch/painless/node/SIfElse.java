@@ -19,93 +19,120 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Variables;
-import org.objectweb.asm.Label;
+import org.elasticsearch.painless.Globals;
+import org.elasticsearch.painless.Locals;
+import org.elasticsearch.painless.Location;
 import org.elasticsearch.painless.MethodWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.Opcodes;
+
+import java.util.Arrays;
+import java.util.Objects;
+import java.util.Set;
+
+import static java.util.Collections.singleton;
 
 /**
  * Represents an if/else block.
  */
 public final class SIfElse extends AStatement {
 
-    AExpression condition;
-    final AStatement ifblock;
-    final AStatement elseblock;
+    private AExpression condition;
+    private final SBlock ifblock;
+    private final SBlock elseblock;
 
-    public SIfElse(int line, String location, AExpression condition, AStatement ifblock, AStatement elseblock) {
-        super(line, location);
+    public SIfElse(Location location, AExpression condition, SBlock ifblock, SBlock elseblock) {
+        super(location);
 
-        this.condition = condition;
+        this.condition = Objects.requireNonNull(condition);
         this.ifblock = ifblock;
         this.elseblock = elseblock;
     }
 
     @Override
-    void analyze(Variables variables) {
-        condition.expected = Definition.BOOLEAN_TYPE;
-        condition.analyze(variables);
-        condition = condition.cast(variables);
+    void extractVariables(Set<String> variables) {
+        condition.extractVariables(variables);
+
+        if (ifblock != null) {
+            ifblock.extractVariables(variables);
+        }
+
+        if (elseblock != null) {
+            elseblock.extractVariables(variables);
+        }
+    }
+
+    @Override
+    void analyze(Locals locals) {
+        condition.expected = boolean.class;
+        condition.analyze(locals);
+        condition = condition.cast(locals);
 
         if (condition.constant != null) {
-            throw new IllegalArgumentException(error("Extraneous if statement."));
+            throw createError(new IllegalArgumentException("Extraneous if statement."));
+        }
+
+        if (ifblock == null) {
+            throw createError(new IllegalArgumentException("Extraneous if statement."));
         }
 
         ifblock.lastSource = lastSource;
         ifblock.inLoop = inLoop;
         ifblock.lastLoop = lastLoop;
 
-        variables.incrementScope();
-        ifblock.analyze(variables);
-        variables.decrementScope();
+        ifblock.analyze(Locals.newLocalScope(locals));
 
         anyContinue = ifblock.anyContinue;
         anyBreak = ifblock.anyBreak;
         statementCount = ifblock.statementCount;
 
-        if (elseblock != null) {
-            elseblock.lastSource = lastSource;
-            elseblock.inLoop = inLoop;
-            elseblock.lastLoop = lastLoop;
-
-            variables.incrementScope();
-            elseblock.analyze(variables);
-            variables.decrementScope();
-
-            methodEscape = ifblock.methodEscape && elseblock.methodEscape;
-            loopEscape = ifblock.loopEscape && elseblock.loopEscape;
-            allEscape = ifblock.allEscape && elseblock.allEscape;
-            anyContinue |= elseblock.anyContinue;
-            anyBreak |= elseblock.anyBreak;
-            statementCount = Math.max(ifblock.statementCount, elseblock.statementCount);
+        if (elseblock == null) {
+            throw createError(new IllegalArgumentException("Extraneous else statement."));
         }
+
+        elseblock.lastSource = lastSource;
+        elseblock.inLoop = inLoop;
+        elseblock.lastLoop = lastLoop;
+
+        elseblock.analyze(Locals.newLocalScope(locals));
+
+        methodEscape = ifblock.methodEscape && elseblock.methodEscape;
+        loopEscape = ifblock.loopEscape && elseblock.loopEscape;
+        allEscape = ifblock.allEscape && elseblock.allEscape;
+        anyContinue |= elseblock.anyContinue;
+        anyBreak |= elseblock.anyBreak;
+        statementCount = Math.max(ifblock.statementCount, elseblock.statementCount);
     }
 
     @Override
-    void write(MethodWriter adapter) {
-        writeDebugInfo(adapter);
-        final Label end = new Label();
-        final Label fals = elseblock != null ? new Label() : end;
+    void write(MethodWriter writer, Globals globals) {
+        writer.writeStatementOffset(location);
 
-        condition.fals = fals;
-        condition.write(adapter);
+        Label fals = new Label();
+        Label end = new Label();
+
+        condition.write(writer, globals);
+        writer.ifZCmp(Opcodes.IFEQ, fals);
 
         ifblock.continu = continu;
         ifblock.brake = brake;
-        ifblock.write(adapter);
+        ifblock.write(writer, globals);
 
-        if (elseblock != null) {
-            if (!ifblock.allEscape) {
-                adapter.goTo(end);
-            }
-
-            adapter.mark(fals);
-
-            elseblock.continu = continu;
-            elseblock.brake = brake;
-            elseblock.write(adapter);
+        if (!ifblock.allEscape) {
+            writer.goTo(end);
         }
 
-        adapter.mark(end);
+        writer.mark(fals);
+
+        elseblock.continu = continu;
+        elseblock.brake = brake;
+        elseblock.write(writer, globals);
+
+        writer.mark(end);
+    }
+
+    @Override
+    public String toString() {
+        return multilineToString(singleton(condition), Arrays.asList(ifblock, elseblock));
     }
 }

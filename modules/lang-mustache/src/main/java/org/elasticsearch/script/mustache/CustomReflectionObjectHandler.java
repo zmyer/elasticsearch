@@ -20,6 +20,7 @@
 package org.elasticsearch.script.mustache;
 
 import com.github.mustachejava.reflect.ReflectionObjectHandler;
+import org.elasticsearch.common.util.CollectionUtils;
 import org.elasticsearch.common.util.iterable.Iterables;
 
 import java.lang.reflect.Array;
@@ -49,12 +50,12 @@ final class CustomReflectionObjectHandler extends ReflectionObjectHandler {
         }
     }
 
-    final static class ArrayMap extends AbstractMap<Object, Object> implements Iterable<Object> {
+    static final class ArrayMap extends AbstractMap<Object, Object> implements Iterable<Object> {
 
         private final Object array;
         private final int length;
 
-        public ArrayMap(Object array) {
+        ArrayMap(Object array) {
             this.array = array;
             this.length = Array.getLength(array);
         }
@@ -109,11 +110,11 @@ final class CustomReflectionObjectHandler extends ReflectionObjectHandler {
 
     }
 
-    final static class CollectionMap extends AbstractMap<Object, Object> implements Iterable<Object> {
+    static final class CollectionMap extends AbstractMap<Object, Object> implements Iterable<Object> {
 
         private final Collection<Object> col;
 
-        public CollectionMap(Collection<Object> col) {
+        CollectionMap(Collection<Object> col) {
             this.col = col;
         }
 
@@ -154,4 +155,9 @@ final class CustomReflectionObjectHandler extends ReflectionObjectHandler {
         }
     }
 
+    @Override
+    public String stringify(Object object) {
+        CollectionUtils.ensureNoSelfReferences(object);
+        return super.stringify(object);
+    }
 }
