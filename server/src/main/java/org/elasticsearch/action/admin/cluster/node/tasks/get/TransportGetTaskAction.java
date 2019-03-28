@@ -28,12 +28,13 @@ import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
+import org.elasticsearch.client.OriginSettingClient;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
+import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentParser;
@@ -51,6 +52,7 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+import static org.elasticsearch.action.admin.cluster.node.tasks.get.GetTaskAction.TASKS_ORIGIN;
 import static org.elasticsearch.action.admin.cluster.node.tasks.list.TransportListTasksAction.waitForCompletionTimeout;
 
 /**
@@ -64,25 +66,21 @@ import static org.elasticsearch.action.admin.cluster.node.tasks.list.TransportLi
  * </ul>
  */
 public class TransportGetTaskAction extends HandledTransportAction<GetTaskRequest, GetTaskResponse> {
+    private final ThreadPool threadPool;
     private final ClusterService clusterService;
     private final TransportService transportService;
     private final Client client;
     private final NamedXContentRegistry xContentRegistry;
 
     @Inject
-    public TransportGetTaskAction(Settings settings, ThreadPool threadPool, TransportService transportService, ActionFilters actionFilters,
-            IndexNameExpressionResolver indexNameExpressionResolver, ClusterService clusterService, Client client,
-            NamedXContentRegistry xContentRegistry) {
-        super(settings, GetTaskAction.NAME, threadPool, transportService, actionFilters, indexNameExpressionResolver, GetTaskRequest::new);
+    public TransportGetTaskAction(ThreadPool threadPool, TransportService transportService, ActionFilters actionFilters,
+            ClusterService clusterService, Client client, NamedXContentRegistry xContentRegistry) {
+        super(GetTaskAction.NAME, transportService, actionFilters, GetTaskRequest::new);
+        this.threadPool = threadPool;
         this.clusterService = clusterService;
         this.transportService = transportService;
-        this.client = client;
+        this.client = new OriginSettingClient(client, TASKS_ORIGIN);
         this.xContentRegistry = xContentRegistry;
-    }
-
-    @Override
-    protected void doExecute(GetTaskRequest request, ActionListener<GetTaskResponse> listener) {
-        throw new UnsupportedOperationException("Task is required");
     }
 
     @Override
@@ -104,7 +102,6 @@ public class TransportGetTaskAction extends HandledTransportAction<GetTaskReques
         if (request.getTimeout() != null) {
             builder.withTimeout(request.getTimeout());
         }
-        builder.withCompress(false);
         DiscoveryNode node = clusterService.state().nodes().get(request.getTaskId().getNodeId());
         if (node == null) {
             // Node is no longer part of the cluster! Try and look the task up from the results index.
@@ -123,8 +120,10 @@ public class TransportGetTaskAction extends HandledTransportAction<GetTaskReques
         transportService.sendRequest(node, GetTaskAction.NAME, nodeRequest, builder.build(),
                 new TransportResponseHandler<GetTaskResponse>() {
                     @Override
-                    public GetTaskResponse newInstance() {
-                        return new GetTaskResponse();
+                    public GetTaskResponse read(StreamInput in) throws IOException {
+                        GetTaskResponse response = new GetTaskResponse();
+                        response.readFrom(in);
+                        return response;
                     }
 
                     @Override
@@ -212,6 +211,7 @@ public class TransportGetTaskAction extends HandledTransportAction<GetTaskReques
         GetRequest get = new GetRequest(TaskResultsService.TASK_INDEX, TaskResultsService.TASK_TYPE,
                 request.getTaskId().toString());
         get.setParentTask(clusterService.localNode().getId(), thisTask.getId());
+
         client.get(get, new ActionListener<GetResponse>() {
             @Override
             public void onResponse(GetResponse getResponse) {
@@ -248,7 +248,8 @@ public class TransportGetTaskAction extends HandledTransportAction<GetTaskReques
             listener.onFailure(new ElasticsearchException("Stored task status for [{}] didn't contain any source!", response.getId()));
             return;
         }
-        try (XContentParser parser = XContentHelper.createParser(xContentRegistry, response.getSourceAsBytesRef())) {
+        try (XContentParser parser = XContentHelper
+                .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, response.getSourceAsBytesRef())) {
             TaskResult result = TaskResult.PARSER.apply(parser, null);
             listener.onResponse(new GetTaskResponse(result));
         }

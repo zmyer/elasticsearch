@@ -19,42 +19,68 @@
 
 package org.elasticsearch.action.admin.indices.close;
 
-import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.xcontent.ToXContent;
-import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.Version;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
+import org.elasticsearch.common.io.stream.BytesStreamOutput;
+import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.test.VersionUtils;
 
-import java.io.IOException;
-
-import static org.elasticsearch.test.XContentTestUtils.insertRandomFields;
-import static org.hamcrest.CoreMatchers.equalTo;
+import static org.elasticsearch.test.VersionUtils.randomVersionBetween;
+import static org.hamcrest.Matchers.equalTo;
 
 public class CloseIndexResponseTests extends ESTestCase {
 
-    public void testFromToXContent() throws IOException {
-        final CloseIndexResponse closeIndexResponse = createTestItem();
+    public void testSerialization() throws Exception {
+        final CloseIndexResponse response = randomResponse();
+        try (BytesStreamOutput out = new BytesStreamOutput()) {
+            response.writeTo(out);
 
-        boolean humanReadable = randomBoolean();
-        final XContentType xContentType = randomFrom(XContentType.values());
-        BytesReference originalBytes = toShuffledXContent(closeIndexResponse, xContentType, ToXContent.EMPTY_PARAMS, humanReadable);
-        BytesReference mutated;
-        if (randomBoolean()) {
-            mutated = insertRandomFields(xContentType, originalBytes, null, random());
-        } else {
-            mutated = originalBytes;
+            final CloseIndexResponse deserializedResponse = new CloseIndexResponse();
+            try (StreamInput in = out.bytes().streamInput()) {
+                deserializedResponse.readFrom(in);
+            }
+            assertCloseIndexResponse(deserializedResponse, response);
         }
-        
-        CloseIndexResponse parsedCloseIndexResponse;
-        try (XContentParser parser = createParser(xContentType.xContent(), mutated)) {
-            parsedCloseIndexResponse = CloseIndexResponse.fromXContent(parser);
-            assertNull(parser.nextToken());
-        }
-        assertThat(parsedCloseIndexResponse.isAcknowledged(), equalTo(closeIndexResponse.isAcknowledged()));
     }
-    
-    private static CloseIndexResponse createTestItem() {
-        boolean acknowledged = randomBoolean();
-        return new CloseIndexResponse(acknowledged);
+
+    public void testBwcSerialization() throws Exception {
+        {
+            final CloseIndexResponse response = randomResponse();
+            try (BytesStreamOutput out = new BytesStreamOutput()) {
+                out.setVersion(randomVersionBetween(random(), Version.V_6_0_0, VersionUtils.getPreviousVersion(Version.V_7_1_0)));
+                response.writeTo(out);
+
+                final AcknowledgedResponse deserializedResponse = new AcknowledgedResponse();
+                try (StreamInput in = out.bytes().streamInput()) {
+                    deserializedResponse.readFrom(in);
+                }
+                assertThat(deserializedResponse.isAcknowledged(), equalTo(response.isAcknowledged()));
+            }
+        }
+        {
+            final AcknowledgedResponse response = new AcknowledgedResponse(randomBoolean());
+            try (BytesStreamOutput out = new BytesStreamOutput()) {
+                response.writeTo(out);
+
+                final CloseIndexResponse deserializedResponse = new CloseIndexResponse();
+                try (StreamInput in = out.bytes().streamInput()) {
+                    in.setVersion(randomVersionBetween(random(), Version.V_6_0_0, VersionUtils.getPreviousVersion(Version.V_7_1_0)));
+                    deserializedResponse.readFrom(in);
+                }
+                assertThat(deserializedResponse.isAcknowledged(), equalTo(response.isAcknowledged()));
+            }
+        }
+    }
+
+    private CloseIndexResponse randomResponse() {
+        final boolean acknowledged = randomBoolean();
+        final boolean shardsAcknowledged = acknowledged ? randomBoolean() : false;
+        return new CloseIndexResponse(acknowledged, shardsAcknowledged);
+    }
+
+    private static void assertCloseIndexResponse(final CloseIndexResponse actual, final CloseIndexResponse expected) {
+        assertThat(actual.isAcknowledged(), equalTo(expected.isAcknowledged()));
+        assertThat(actual.isShardsAcknowledged(), equalTo(expected.isShardsAcknowledged()));
     }
 }

@@ -28,8 +28,8 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.index.query.QueryShardException;
+import org.elasticsearch.script.ScoreScript;
 import org.elasticsearch.script.Script;
-import org.elasticsearch.script.SearchScript;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -92,8 +92,8 @@ public class ScriptScoreFunctionBuilder extends ScoreFunctionBuilder<ScriptScore
     @Override
     protected ScoreFunction doToFunction(QueryShardContext context) {
         try {
-            SearchScript.Factory factory = context.getScriptService().compile(script, SearchScript.CONTEXT);
-            SearchScript.LeafFactory searchScript = factory.newFactory(script.getParams(), context.lookup());
+            ScoreScript.Factory factory = context.getScriptService().compile(script, ScoreScript.CONTEXT);
+            ScoreScript.LeafFactory searchScript = factory.newFactory(script.getParams(), context.lookup());
             return new ScriptScoreFunction(script, searchScript);
         } catch (Exception e) {
             throw new QueryShardException(context, "script_score: the script could not be loaded", e);
@@ -109,7 +109,7 @@ public class ScriptScoreFunctionBuilder extends ScoreFunctionBuilder<ScriptScore
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else {
-                if (Script.SCRIPT_PARSE_FIELD.match(currentFieldName)) {
+                if (Script.SCRIPT_PARSE_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     script = Script.parse(parser);
                 } else {
                     throw new ParsingException(parser.getTokenLocation(), NAME + " query does not support [" + currentFieldName + "]");

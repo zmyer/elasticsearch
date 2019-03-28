@@ -36,7 +36,6 @@ import org.apache.lucene.util.automaton.CompiledAutomaton;
 import org.apache.lucene.util.automaton.Operations;
 import org.apache.lucene.util.automaton.RegExp;
 import org.elasticsearch.ElasticsearchParseException;
-import org.elasticsearch.Version;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -104,9 +103,9 @@ public class IncludeExclude implements Writeable, ToXContentFragment {
             while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
                 if (token == XContentParser.Token.FIELD_NAME) {
                     currentFieldName = parser.currentName();
-                } else if (NUM_PARTITIONS_FIELD.match(currentFieldName)) {
+                } else if (NUM_PARTITIONS_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     numPartitions = parser.intValue();
-                } else if (PARTITION_FIELD.match(currentFieldName)) {
+                } else if (PARTITION_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     partition = parser.intValue();
                 } else {
                     throw new ElasticsearchParseException(
@@ -424,13 +423,8 @@ public class IncludeExclude implements Writeable, ToXContentFragment {
         } else {
             excludeValues = null;
         }
-        if (in.getVersion().onOrAfter(Version.V_5_2_0)) {
-            incNumPartitions = in.readVInt();
-            incZeroBasedPartition = in.readVInt();
-        } else {
-            incNumPartitions = 0;
-            incZeroBasedPartition = 0;
-        }
+        incNumPartitions = in.readVInt();
+        incZeroBasedPartition = in.readVInt();
     }
 
     @Override
@@ -457,10 +451,8 @@ public class IncludeExclude implements Writeable, ToXContentFragment {
                     out.writeBytesRef(value);
                 }
             }
-            if (out.getVersion().onOrAfter(Version.V_5_2_0)) {
-                out.writeVInt(incNumPartitions);
-                out.writeVInt(incZeroBasedPartition);
-            }
+            out.writeVInt(incNumPartitions);
+            out.writeVInt(incZeroBasedPartition);
         }
     }
 

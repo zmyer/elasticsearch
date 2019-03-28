@@ -21,7 +21,6 @@ package org.elasticsearch.action.search;
 
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
-import org.apache.logging.log4j.util.Supplier;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
@@ -43,6 +42,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 
 import static org.elasticsearch.action.search.TransportSearchHelper.internalScrollSearchRequest;
 
@@ -129,16 +129,8 @@ abstract class SearchScrollAsyncAction<T extends SearchPhaseResult> implements R
             listener.onResponse((cluster, node) -> nodes.get(node));
         } else {
             RemoteClusterService remoteClusterService = searchTransportService.getRemoteClusterService();
-            remoteClusterService.collectNodes(clusters, ActionListener.wrap(nodeFunction -> {
-                final BiFunction<String, String, DiscoveryNode> clusterNodeLookup = (clusterAlias, node) -> {
-                    if (clusterAlias == null) {
-                        return nodes.get(node);
-                    } else {
-                        return nodeFunction.apply(clusterAlias, node);
-                    }
-                };
-                listener.onResponse(clusterNodeLookup);
-            }, listener::onFailure));
+            remoteClusterService.collectNodes(clusters, ActionListener.map(listener,
+                nodeFunction -> (clusterAlias, node) -> clusterAlias == null ? nodes.get(node) : nodeFunction.apply(clusterAlias, node)));
         }
     }
 
@@ -259,7 +251,7 @@ abstract class SearchScrollAsyncAction<T extends SearchPhaseResult> implements R
                                   @Nullable SearchShardTarget searchShardTarget,
                                   Supplier<SearchPhase> nextPhaseSupplier) {
         if (logger.isDebugEnabled()) {
-            logger.debug((Supplier<?>) () -> new ParameterizedMessage("[{}] Failed to execute {} phase", searchId, phaseName), failure);
+            logger.debug(new ParameterizedMessage("[{}] Failed to execute {} phase", searchId, phaseName), failure);
         }
         addShardFailure(new ShardSearchFailure(failure, searchShardTarget));
         int successfulOperations = successfulOps.decrementAndGet();

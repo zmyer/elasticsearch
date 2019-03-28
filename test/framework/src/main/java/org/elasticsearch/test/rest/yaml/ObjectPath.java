@@ -22,6 +22,7 @@ import org.apache.http.util.EntityUtils;
 import org.elasticsearch.client.Response;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -48,7 +49,8 @@ public class ObjectPath {
     }
 
     public static ObjectPath createFromXContent(XContent xContent, BytesReference input) throws IOException {
-        try (XContentParser parser = xContent.createParser(NamedXContentRegistry.EMPTY, input)) {
+        try (XContentParser parser = xContent
+                .createParser(NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, input.streamInput())) {
             if (parser.nextToken() == XContentParser.Token.START_ARRAY) {
                 return new ObjectPath(parser.listOrderedMap());
             }
@@ -100,7 +102,17 @@ public class ObjectPath {
         }
 
         if (object instanceof Map) {
-            return ((Map<String, Object>) object).get(key);
+            final Map<String, Object> objectAsMap = (Map<String, Object>) object;
+            if ("_arbitrary_key_".equals(key)) {
+                if (objectAsMap.isEmpty()) {
+                    throw new IllegalArgumentException("requested [" + key + "] but the map was empty");
+                }
+                if (objectAsMap.containsKey(key)) {
+                    throw new IllegalArgumentException("requested meta-key [" + key + "] but the map unexpectedly contains this key");
+                }
+                return objectAsMap.keySet().iterator().next();
+            }
+            return objectAsMap.get(key);
         }
         if (object instanceof List) {
             List<Object> list = (List<Object>) object;
@@ -147,7 +159,7 @@ public class ObjectPath {
             list.add(current.toString());
         }
 
-        return list.toArray(new String[list.size()]);
+        return list.toArray(new String[0]);
     }
 
     /**

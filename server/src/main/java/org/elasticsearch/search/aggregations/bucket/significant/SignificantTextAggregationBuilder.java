@@ -32,7 +32,6 @@ import org.elasticsearch.search.aggregations.AbstractAggregationBuilder;
 import org.elasticsearch.search.aggregations.AggregationBuilder;
 import org.elasticsearch.search.aggregations.AggregationInitializationException;
 import org.elasticsearch.search.aggregations.Aggregator;
-import org.elasticsearch.search.aggregations.AggregatorFactories;
 import org.elasticsearch.search.aggregations.AggregatorFactories.Builder;
 import org.elasticsearch.search.aggregations.AggregatorFactory;
 import org.elasticsearch.search.aggregations.bucket.significant.heuristics.SignificanceHeuristic;
@@ -111,7 +110,7 @@ public class SignificantTextAggregationBuilder extends AbstractAggregationBuilde
             PARSER.declareObject(SignificantTextAggregationBuilder::significanceHeuristic,
                     (p, context) -> {
                         SignificanceHeuristicParser significanceHeuristicParser = significanceHeuristicParserRegistry
-                                .lookupReturningNullIfNotFound(name);
+                                .lookupReturningNullIfNotFound(name, p.getDeprecationHandler());
                         return significanceHeuristicParser.parse(p);
                     }, new ParseField(name));
         }
@@ -344,13 +343,10 @@ public class SignificantTextAggregationBuilder extends AbstractAggregationBuilde
     protected AggregatorFactory<?> doBuild(SearchContext context, AggregatorFactory<?> parent,
             Builder subFactoriesBuilder) throws IOException {
         SignificanceHeuristic executionHeuristic = this.significanceHeuristic.rewrite(context);
-        String[] execFieldNames = sourceFieldNames;
-        if (execFieldNames == null) {
-            execFieldNames = new String[] { fieldName };
-        }
+
         return new SignificantTextAggregatorFactory(name, includeExclude, filterBuilder,
                 bucketCountThresholds, executionHeuristic, context, parent, subFactoriesBuilder,
-                fieldName, execFieldNames, filterDuplicateText, metaData);
+                fieldName, sourceFieldNames, filterDuplicateText, metaData);
     }
 
     @Override

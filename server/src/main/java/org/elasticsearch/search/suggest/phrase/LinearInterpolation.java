@@ -139,17 +139,17 @@ public final class LinearInterpolation extends SmoothingModel {
             if (token == XContentParser.Token.FIELD_NAME) {
                 fieldName = parser.currentName();
             } else if (token.isValue()) {
-                if (TRIGRAM_FIELD.match(fieldName)) {
+                if (TRIGRAM_FIELD.match(fieldName, parser.getDeprecationHandler())) {
                     trigramLambda = parser.doubleValue();
                     if (trigramLambda < 0) {
                         throw new IllegalArgumentException("trigram_lambda must be positive");
                     }
-                } else if (BIGRAM_FIELD.match(fieldName)) {
+                } else if (BIGRAM_FIELD.match(fieldName, parser.getDeprecationHandler())) {
                     bigramLambda = parser.doubleValue();
                     if (bigramLambda < 0) {
                         throw new IllegalArgumentException("bigram_lambda must be positive");
                     }
-                } else if (UNIGRAM_FIELD.match(fieldName)) {
+                } else if (UNIGRAM_FIELD.match(fieldName, parser.getDeprecationHandler())) {
                     unigramLambda = parser.doubleValue();
                     if (unigramLambda < 0) {
                         throw new IllegalArgumentException("unigram_lambda must be positive");
@@ -168,8 +168,8 @@ public final class LinearInterpolation extends SmoothingModel {
 
     @Override
     public WordScorerFactory buildWordScorerFactory() {
-        return (IndexReader reader, Terms terms, String field, double realWordLikelyhood, BytesRef separator) ->
-                    new LinearInterpolatingScorer(reader, terms, field, realWordLikelyhood, separator, trigramLambda, bigramLambda,
+        return (IndexReader reader, Terms terms, String field, double realWordLikelihood, BytesRef separator) ->
+                    new LinearInterpolatingScorer(reader, terms, field, realWordLikelihood, separator, trigramLambda, bigramLambda,
                         unigramLambda);
     }
 }

@@ -22,21 +22,28 @@ package org.elasticsearch.index.cache.request;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
+import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.unit.ByteSizeValue;
-import org.elasticsearch.common.xcontent.ToXContent.Params;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
 
-public class RequestCacheStats implements Streamable, ToXContentFragment {
+public class RequestCacheStats implements Streamable, Writeable, ToXContentFragment {
 
-    long memorySize;
-    long evictions;
-    long hitCount;
-    long missCount;
+    private long memorySize;
+    private long evictions;
+    private long hitCount;
+    private long missCount;
 
     public RequestCacheStats() {
+    }
+
+    public RequestCacheStats(StreamInput in) throws IOException {
+        memorySize = in.readVLong();
+        evictions = in.readVLong();
+        hitCount = in.readVLong();
+        missCount = in.readVLong();
     }
 
     public RequestCacheStats(long memorySize, long evictions, long hitCount, long missCount) {
@@ -75,10 +82,7 @@ public class RequestCacheStats implements Streamable, ToXContentFragment {
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
-        memorySize = in.readVLong();
-        evictions = in.readVLong();
-        hitCount = in.readVLong();
-        missCount = in.readVLong();
+        throw new UnsupportedOperationException("usage of Streamable is to be replaced by Writeable");
     }
 
     @Override
@@ -92,7 +96,7 @@ public class RequestCacheStats implements Streamable, ToXContentFragment {
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(Fields.REQUEST_CACHE_STATS);
-        builder.byteSizeField(Fields.MEMORY_SIZE_IN_BYTES, Fields.MEMORY_SIZE, memorySize);
+        builder.humanReadableField(Fields.MEMORY_SIZE_IN_BYTES, Fields.MEMORY_SIZE, getMemorySize());
         builder.field(Fields.EVICTIONS, getEvictions());
         builder.field(Fields.HIT_COUNT, getHitCount());
         builder.field(Fields.MISS_COUNT, getMissCount());

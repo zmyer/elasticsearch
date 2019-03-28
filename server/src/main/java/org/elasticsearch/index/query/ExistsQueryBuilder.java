@@ -99,11 +99,11 @@ public class ExistsQueryBuilder extends AbstractQueryBuilder<ExistsQueryBuilder>
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else if (token.isValue()) {
-                if (FIELD_FIELD.match(currentFieldName)) {
+                if (FIELD_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     fieldPattern = parser.text();
-                } else if (AbstractQueryBuilder.NAME_FIELD.match(currentFieldName)) {
+                } else if (AbstractQueryBuilder.NAME_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     queryName = parser.text();
-                } else if (AbstractQueryBuilder.BOOST_FIELD.match(currentFieldName)) {
+                } else if (AbstractQueryBuilder.BOOST_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     boost = parser.floatValue();
                 } else {
                     throw new ParsingException(parser.getTokenLocation(), "[" + ExistsQueryBuilder.NAME +
@@ -131,7 +131,7 @@ public class ExistsQueryBuilder extends AbstractQueryBuilder<ExistsQueryBuilder>
     }
 
     public static Query newFilter(QueryShardContext context, String fieldPattern) {
-        
+
         final FieldNamesFieldMapper.FieldNamesFieldType fieldNamesFieldType = (FieldNamesFieldMapper.FieldNamesFieldType) context
                 .getMapperService().fullName(FieldNamesFieldMapper.NAME);
         if (fieldNamesFieldType == null) {
@@ -149,7 +149,7 @@ public class ExistsQueryBuilder extends AbstractQueryBuilder<ExistsQueryBuilder>
         }
 
         if (context.indexVersionCreated().before(Version.V_6_1_0)) {
-            return newLegacyExistsQuery(fields);
+            return newLegacyExistsQuery(context, fields);
         }
 
         if (fields.size() == 1) {
@@ -164,20 +164,26 @@ public class ExistsQueryBuilder extends AbstractQueryBuilder<ExistsQueryBuilder>
         return new ConstantScoreQuery(boolFilterBuilder.build());
     }
 
-    private static Query newLegacyExistsQuery(Collection<String> fields) {
-        // We create TermsQuery directly here rather than using FieldNamesFieldType.termsQuery() 
+    private static Query newLegacyExistsQuery(QueryShardContext context, Collection<String> fields) {
+        // We create TermsQuery directly here rather than using FieldNamesFieldType.termsQuery()
         // so we don't end up with deprecation warnings
         if (fields.size() == 1) {
-            Query filter = new TermQuery(new Term(FieldNamesFieldMapper.NAME, fields.iterator().next()));
+            Query filter = newLegacyExistsQuery(context, fields.iterator().next());
             return new ConstantScoreQuery(filter);
         }
 
         BooleanQuery.Builder boolFilterBuilder = new BooleanQuery.Builder();
         for (String field : fields) {
-            Query filter = new TermQuery(new Term(FieldNamesFieldMapper.NAME, field));
+            Query filter = newLegacyExistsQuery(context, field);
             boolFilterBuilder.add(filter, BooleanClause.Occur.SHOULD);
         }
         return new ConstantScoreQuery(boolFilterBuilder.build());
+    }
+
+    private static Query newLegacyExistsQuery(QueryShardContext context, String field) {
+        MappedFieldType fieldType = context.fieldMapper(field);
+        String fieldName = fieldType != null ? fieldType.name() : field;
+        return new TermQuery(new Term(FieldNamesFieldMapper.NAME, fieldName));
     }
 
     private static Query newFieldExistsQuery(QueryShardContext context, String field) {

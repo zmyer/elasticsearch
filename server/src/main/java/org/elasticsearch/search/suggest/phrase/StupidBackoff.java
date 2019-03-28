@@ -113,7 +113,7 @@ public final class StupidBackoff extends SmoothingModel {
             if (token == XContentParser.Token.FIELD_NAME) {
                 fieldName = parser.currentName();
             }
-            if (token.isValue() && DISCOUNT_FIELD.match(fieldName)) {
+            if (token.isValue() && DISCOUNT_FIELD.match(fieldName, parser.getDeprecationHandler())) {
                 discount = parser.doubleValue();
             }
         }
@@ -122,7 +122,7 @@ public final class StupidBackoff extends SmoothingModel {
 
     @Override
     public WordScorerFactory buildWordScorerFactory() {
-        return (IndexReader reader, Terms terms, String field, double realWordLikelyhood, BytesRef separator)
-                -> new StupidBackoffScorer(reader, terms, field, realWordLikelyhood, separator, discount);
+        return (IndexReader reader, Terms terms, String field, double realWordLikelihood, BytesRef separator)
+                -> new StupidBackoffScorer(reader, terms, field, realWordLikelihood, separator, discount);
     }
 }

@@ -28,7 +28,6 @@ import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.search.aggregations.AggregationBuilder;
 import org.elasticsearch.search.aggregations.Aggregator;
-import org.elasticsearch.search.aggregations.AggregatorFactories;
 import org.elasticsearch.search.aggregations.AggregatorFactories.Builder;
 import org.elasticsearch.search.aggregations.AggregatorFactory;
 import org.elasticsearch.search.aggregations.bucket.MultiBucketAggregationBuilder;
@@ -96,7 +95,7 @@ public class SignificantTermsAggregationBuilder extends ValuesSourceAggregationB
             aggregationParser.declareObject(SignificantTermsAggregationBuilder::significanceHeuristic,
                     (p, context) -> {
                         SignificanceHeuristicParser significanceHeuristicParser = significanceHeuristicParserRegistry
-                                .lookupReturningNullIfNotFound(name);
+                                .lookupReturningNullIfNotFound(name, p.getDeprecationHandler());
                         return significanceHeuristicParser.parse(p);
                     },
                     new ParseField(name));

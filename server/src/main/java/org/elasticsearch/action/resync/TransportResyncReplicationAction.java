@@ -19,19 +19,20 @@
 package org.elasticsearch.action.resync;
 
 import org.apache.logging.log4j.message.ParameterizedMessage;
-import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ActionFilters;
-import org.elasticsearch.action.support.TransportActions;
 import org.elasticsearch.action.support.replication.ReplicationOperation;
 import org.elasticsearch.action.support.replication.ReplicationResponse;
 import org.elasticsearch.action.support.replication.TransportReplicationAction;
 import org.elasticsearch.action.support.replication.TransportWriteAction;
 import org.elasticsearch.cluster.action.shard.ShardStateAction;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.seqno.SequenceNumbers;
@@ -45,6 +46,7 @@ import org.elasticsearch.transport.TransportException;
 import org.elasticsearch.transport.TransportResponseHandler;
 import org.elasticsearch.transport.TransportService;
 
+import java.io.IOException;
 import java.util.function.Supplier;
 
 public class TransportResyncReplicationAction extends TransportWriteAction<ResyncReplicationRequest,
@@ -58,7 +60,7 @@ public class TransportResyncReplicationAction extends TransportWriteAction<Resyn
                                             ShardStateAction shardStateAction, ActionFilters actionFilters,
                                             IndexNameExpressionResolver indexNameExpressionResolver) {
         super(settings, ACTION_NAME, transportService, clusterService, indicesService, threadPool, shardStateAction, actionFilters,
-            indexNameExpressionResolver, ResyncReplicationRequest::new, ResyncReplicationRequest::new, ThreadPool.Names.BULK);
+            indexNameExpressionResolver, ResyncReplicationRequest::new, ResyncReplicationRequest::new, ThreadPool.Names.WRITE);
     }
 
     @Override
@@ -83,8 +85,7 @@ public class TransportResyncReplicationAction extends TransportWriteAction<Resyn
 
     @Override
     protected ReplicationOperation.Replicas newReplicasProxy(long primaryTerm) {
-        // We treat the resync as best-effort for now and don't mark unavailable shard copies as stale.
-        return new ReplicasProxy(primaryTerm);
+        return new ResyncActionReplicasProxy(primaryTerm);
     }
 
     @Override
@@ -92,22 +93,29 @@ public class TransportResyncReplicationAction extends TransportWriteAction<Resyn
         final ConcreteReplicaRequest<ResyncReplicationRequest> replicaRequest,
         final DiscoveryNode node,
         final ActionListener<ReplicationOperation.ReplicaResponse> listener) {
-        if (node.getVersion().onOrAfter(Version.V_6_0_0_alpha1)) {
-            super.sendReplicaRequest(replicaRequest, node, listener);
-        } else {
-            final long pre60NodeCheckpoint = SequenceNumbers.PRE_60_NODE_CHECKPOINT;
-            listener.onResponse(new ReplicaResponse(pre60NodeCheckpoint, pre60NodeCheckpoint));
-        }
+        super.sendReplicaRequest(replicaRequest, node, listener);
+    }
+
+    @Override
+    protected ClusterBlockLevel globalBlockLevel() {
+        // resync should never be blocked because it's an internal action
+        return null;
+    }
+
+    @Override
+    public ClusterBlockLevel indexBlockLevel() {
+        // resync should never be blocked because it's an internal action
+        return null;
     }
 
     @Override
     protected WritePrimaryResult<ResyncReplicationRequest, ResyncReplicationResponse> shardOperationOnPrimary(
-        ResyncReplicationRequest request, IndexShard primary) throws Exception {
-        final ResyncReplicationRequest replicaRequest = performOnPrimary(request, primary);
+        ResyncReplicationRequest request, IndexShard primary) {
+        final ResyncReplicationRequest replicaRequest = performOnPrimary(request);
         return new WritePrimaryResult<>(replicaRequest, new ResyncReplicationResponse(), null, null, primary, logger);
     }
 
-    public static ResyncReplicationRequest performOnPrimary(ResyncReplicationRequest request, IndexShard primary) {
+    public static ResyncReplicationRequest performOnPrimary(ResyncReplicationRequest request) {
         return request;
     }
 
@@ -119,20 +127,22 @@ public class TransportResyncReplicationAction extends TransportWriteAction<Resyn
 
     public static Translog.Location performOnReplica(ResyncReplicationRequest request, IndexShard replica) throws Exception {
         Translog.Location location = null;
+        /*
+         * Operations received from resync do not have auto_id_timestamp individually, we need to bootstrap this max_seen_timestamp
+         * (at least the highest timestamp from any of these operations) to make sure that we will disable optimization for the same
+         * append-only requests with timestamp (sources of these operations) that are replicated; otherwise we may have duplicates.
+         */
+        replica.updateMaxUnsafeAutoIdTimestamp(request.getMaxSeenAutoIdTimestampOnPrimary());
         for (Translog.Operation operation : request.getOperations()) {
-            try {
-                final Engine.Result operationResult = replica.applyTranslogOperation(operation, Engine.Operation.Origin.REPLICA,
-                    update -> {
-                        throw new TransportReplicationAction.RetryOnReplicaException(replica.shardId(),
-                            "Mappings are not available on the replica yet, triggered update: " + update);
-                    });
-                location = syncOperationResultOrThrow(operationResult, location);
-            } catch (Exception e) {
-                // if its not a failure to be ignored, let it bubble up
-                if (!TransportActions.isShardNotAvailableException(e)) {
-                    throw e;
-                }
+            final Engine.Result operationResult = replica.applyTranslogOperation(operation, Engine.Operation.Origin.REPLICA);
+            if (operationResult.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
+                throw new TransportReplicationAction.RetryOnReplicaException(replica.shardId(),
+                    "Mappings are not available on the replica yet, triggered update: " + operationResult.getRequiredMappingUpdate());
             }
+            location = syncOperationResultOrThrow(operationResult, location);
+        }
+        if (request.getTrimAboveSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO) {
+            replica.trimOperationOfPreviousPrimaryTerms(request.getTrimAboveSeqNo());
         }
         return location;
     }
@@ -149,8 +159,10 @@ public class TransportResyncReplicationAction extends TransportWriteAction<Resyn
             transportOptions,
             new TransportResponseHandler<ResyncReplicationResponse>() {
                 @Override
-                public ResyncReplicationResponse newInstance() {
-                    return newResponseInstance();
+                public ResyncReplicationResponse read(StreamInput in) throws IOException {
+                    ResyncReplicationResponse response = newResponseInstance();
+                    response.readFrom(in);
+                    return response;
                 }
 
                 @Override
@@ -174,14 +186,26 @@ public class TransportResyncReplicationAction extends TransportWriteAction<Resyn
 
                 @Override
                 public void handleException(TransportException exp) {
-                    final Throwable cause = exp.unwrapCause();
-                    if (TransportActions.isShardNotAvailableException(cause)) {
-                        logger.trace("primary became unavailable during resync, ignoring", exp);
-                    } else {
-                        listener.onFailure(exp);
-                    }
+                    listener.onFailure(exp);
                 }
             });
     }
 
+    /**
+     * A proxy for primary-replica resync operations which are performed on replicas when a new primary is promoted.
+     * Replica shards fail to execute resync operations will be failed but won't be marked as stale.
+     * This avoids marking shards as stale during cluster restart but enforces primary-replica resync mandatory.
+     */
+    class ResyncActionReplicasProxy extends ReplicasProxy {
+
+        ResyncActionReplicasProxy(long primaryTerm) {
+            super(primaryTerm);
+        }
+
+        @Override
+        public void failShardIfNeeded(ShardRouting replica, String message, Exception exception, ActionListener<Void> listener) {
+            shardStateAction.remoteShardFailed(
+                replica.shardId(), replica.allocationId().getId(), primaryTerm, false, message, exception, listener);
+        }
+    }
 }

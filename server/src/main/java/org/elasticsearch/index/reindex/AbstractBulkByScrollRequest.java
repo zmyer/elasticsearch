@@ -19,7 +19,6 @@
 
 package org.elasticsearch.index.reindex;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.search.SearchRequest;
@@ -44,8 +43,8 @@ import static org.elasticsearch.common.unit.TimeValue.timeValueMinutes;
 public abstract class AbstractBulkByScrollRequest<Self extends AbstractBulkByScrollRequest<Self>> extends ActionRequest {
 
     public static final int SIZE_ALL_MATCHES = -1;
-    static final TimeValue DEFAULT_SCROLL_TIMEOUT = timeValueMinutes(5);
-    static final int DEFAULT_SCROLL_SIZE = 1000;
+    public static final TimeValue DEFAULT_SCROLL_TIMEOUT = timeValueMinutes(5);
+    public static final int DEFAULT_SCROLL_SIZE = 1000;
 
     public static final int AUTO_SLICES = 0;
     public static final String AUTO_SLICES_VALUE = "auto";
@@ -150,7 +149,7 @@ public abstract class AbstractBulkByScrollRequest<Self extends AbstractBulkByScr
             e = addValidationError("stored_fields is not supported in this context", e);
         }
         if (maxRetries < 0) {
-            e = addValidationError("retries cannnot be negative", e);
+            e = addValidationError("retries cannot be negative", e);
         }
         if (false == (size == -1 || size > 0)) {
             e = addValidationError(
@@ -185,14 +184,14 @@ public abstract class AbstractBulkByScrollRequest<Self extends AbstractBulkByScr
     }
 
     /**
-     * Should version conflicts cause aborts? Defaults to false.
+     * Whether or not version conflicts cause the action to abort.
      */
     public boolean isAbortOnVersionConflict() {
         return abortOnVersionConflict;
     }
 
     /**
-     * Should version conflicts cause aborts? Defaults to false.
+     * Set whether or not version conflicts cause the action to abort.
      */
     public Self setAbortOnVersionConflict(boolean abortOnVersionConflict) {
         this.abortOnVersionConflict = abortOnVersionConflict;
@@ -249,6 +248,14 @@ public abstract class AbstractBulkByScrollRequest<Self extends AbstractBulkByScr
      */
     public Self setTimeout(TimeValue timeout) {
         this.timeout = timeout;
+        return self();
+    }
+
+    /**
+     * Timeout to wait for the shards on to be available for each bulk request?
+     */
+    public Self setTimeout(String timeout) {
+        this.timeout = TimeValue.parseTimeValue(timeout, this.timeout, getClass().getSimpleName() + ".timeout");
         return self();
     }
 
@@ -420,9 +427,9 @@ public abstract class AbstractBulkByScrollRequest<Self extends AbstractBulkByScr
         abortOnVersionConflict = in.readBoolean();
         size = in.readVInt();
         refresh = in.readBoolean();
-        timeout = new TimeValue(in);
+        timeout = in.readTimeValue();
         activeShardCount = ActiveShardCount.readFrom(in);
-        retryBackoffInitialTime = new TimeValue(in);
+        retryBackoffInitialTime = in.readTimeValue();
         maxRetries = in.readVInt();
         requestsPerSecond = in.readFloat();
         slices = in.readVInt();
@@ -435,17 +442,12 @@ public abstract class AbstractBulkByScrollRequest<Self extends AbstractBulkByScr
         out.writeBoolean(abortOnVersionConflict);
         out.writeVInt(size);
         out.writeBoolean(refresh);
-        timeout.writeTo(out);
+        out.writeTimeValue(timeout);
         activeShardCount.writeTo(out);
-        retryBackoffInitialTime.writeTo(out);
+        out.writeTimeValue(retryBackoffInitialTime);
         out.writeVInt(maxRetries);
         out.writeFloat(requestsPerSecond);
-        if (out.getVersion().before(Version.V_6_1_0) && slices == AUTO_SLICES) {
-            throw new IllegalArgumentException("Slices set as \"auto\" are not supported before version [" + Version.V_6_1_0 + "]. " +
-                "Found version [" + out.getVersion() + "]");
-        } else {
-            out.writeVInt(slices);
-        }
+        out.writeVInt(slices);
     }
 
     /**

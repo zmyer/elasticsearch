@@ -23,6 +23,7 @@ import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.compress.CompressedXContent;
+import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentParser;
@@ -64,8 +65,8 @@ public class DocumentMapperParser {
         this.similarityService = similarityService;
         this.queryShardContextSupplier = queryShardContextSupplier;
         this.typeParsers = mapperRegistry.getMapperParsers();
-        this.rootTypeParsers = mapperRegistry.getMetadataMapperParsers();
-        indexVersionCreated = indexSettings.getIndexVersionCreated();
+        this.indexVersionCreated = indexSettings.getIndexVersionCreated();
+        this.rootTypeParsers = mapperRegistry.getMetadataMapperParsers(indexVersionCreated);
     }
 
     public Mapper.TypeParser.ParserContext parserContext(String type) {
@@ -162,7 +163,8 @@ public class DocumentMapperParser {
 
     private Tuple<String, Map<String, Object>> extractMapping(String type, String source) throws MapperParsingException {
         Map<String, Object> root;
-        try (XContentParser parser = XContentType.JSON.xContent().createParser(xContentRegistry, source)) {
+        try (XContentParser parser = XContentType.JSON.xContent()
+                .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, source)) {
             root = parser.mapOrdered();
         } catch (Exception e) {
             throw new MapperParsingException("failed to parse mapping definition", e);
@@ -170,15 +172,32 @@ public class DocumentMapperParser {
         return extractMapping(type, root);
     }
 
+    /**
+     * Given an optional type name and mapping definition, returns the type and a normalized form of the mappings.
+     *
+     * The provided mapping definition may or may not contain the type name as the root key in the map. This method
+     * attempts to unwrap the mappings, so that they no longer contain a type name at the root. If no type name can
+     * be found, through either the 'type' parameter or by examining the provided mappings, then an exception will be
+     * thrown.
+     *
+     * @param type An optional type name.
+     * @param root The mapping definition.
+     *
+     * @return A tuple of the form (type, normalized mappings).
+     */
     @SuppressWarnings({"unchecked"})
     private Tuple<String, Map<String, Object>> extractMapping(String type, Map<String, Object> root) throws MapperParsingException {
         if (root.size() == 0) {
-            // if we don't have any keys throw an exception
-            throw new MapperParsingException("malformed mapping no root object found");
+            if (type != null) {
+                return new Tuple<>(type, root);
+            } else {
+                throw new MapperParsingException("malformed mapping, no type name found");
+            }
         }
+
         String rootName = root.keySet().iterator().next();
         Tuple<String, Map<String, Object>> mapping;
-        if (type == null || type.equals(rootName)) {
+        if (type == null || type.equals(rootName) || mapperService.resolveDocumentType(type).equals(rootName)) {
             mapping = new Tuple<>(rootName, (Map<String, Object>) root.get(rootName));
         } else {
             mapping = new Tuple<>(type, root);

@@ -110,7 +110,7 @@ public final class Laplace extends SmoothingModel {
             if (token == XContentParser.Token.FIELD_NAME) {
                 fieldName = parser.currentName();
             }
-            if (token.isValue() && ALPHA_FIELD.match(fieldName)) {
+            if (token.isValue() && ALPHA_FIELD.match(fieldName, parser.getDeprecationHandler())) {
                 alpha = parser.doubleValue();
             }
         }
@@ -119,7 +119,7 @@ public final class Laplace extends SmoothingModel {
 
     @Override
     public WordScorerFactory buildWordScorerFactory() {
-        return (IndexReader reader, Terms terms, String field, double realWordLikelyhood, BytesRef separator)
-                -> new LaplaceScorer(reader, terms,  field, realWordLikelyhood, separator, alpha);
+        return (IndexReader reader, Terms terms, String field, double realWordLikelihood, BytesRef separator)
+                -> new LaplaceScorer(reader, terms,  field, realWordLikelihood, separator, alpha);
     }
 }

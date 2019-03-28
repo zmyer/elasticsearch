@@ -309,18 +309,14 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
             query = new MatchAllDocsQuery();
         }
 
+        CombineFunction boostMode = this.boostMode == null ? DEFAULT_BOOST_MODE : this.boostMode;
         // handle cases where only one score function and no filter was provided. In this case we create a FunctionScoreQuery.
         if (filterFunctions.length == 0) {
             return new FunctionScoreQuery(query, minScore, maxBoost);
         } else if (filterFunctions.length == 1 && filterFunctions[0] instanceof FunctionScoreQuery.FilterScoreFunction == false) {
-            CombineFunction combineFunction = this.boostMode;
-            if (combineFunction == null) {
-                combineFunction = filterFunctions[0].getDefaultScoreCombiner();
-            }
-            return new FunctionScoreQuery(query, filterFunctions[0], combineFunction, minScore, maxBoost);
+            return new FunctionScoreQuery(query, filterFunctions[0], boostMode, minScore, maxBoost);
         }
         // in all other cases we create a FunctionScoreQuery with filters
-        CombineFunction boostMode = this.boostMode == null ? DEFAULT_BOOST_MODE : this.boostMode;
         return new FunctionScoreQuery(query, scoreMode, filterFunctions, boostMode, minScore, maxBoost);
     }
 
@@ -454,7 +450,7 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else if (token == XContentParser.Token.START_OBJECT) {
-                if (QUERY_FIELD.match(currentFieldName)) {
+                if (QUERY_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     if (query != null) {
                         throw new ParsingException(parser.getTokenLocation(), "failed to parse [{}] query. [query] is already defined.",
                                 NAME);
@@ -479,7 +475,7 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
                     filterFunctionBuilders.add(new FunctionScoreQueryBuilder.FilterFunctionBuilder(scoreFunction));
                 }
             } else if (token == XContentParser.Token.START_ARRAY) {
-                if (FUNCTIONS_FIELD.match(currentFieldName)) {
+                if (FUNCTIONS_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     if (singleFunctionFound) {
                         String errorString = "already found [" + singleFunctionName + "], now encountering [functions].";
                         handleMisplacedFunctionsDeclaration(parser.getTokenLocation(), errorString);
@@ -492,17 +488,17 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
                 }
 
             } else if (token.isValue()) {
-                if (SCORE_MODE_FIELD.match(currentFieldName)) {
+                if (SCORE_MODE_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     scoreMode = FunctionScoreQuery.ScoreMode.fromString(parser.text());
-                } else if (BOOST_MODE_FIELD.match(currentFieldName)) {
+                } else if (BOOST_MODE_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     combineFunction = CombineFunction.fromString(parser.text());
-                } else if (MAX_BOOST_FIELD.match(currentFieldName)) {
+                } else if (MAX_BOOST_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     maxBoost = parser.floatValue();
-                } else if (AbstractQueryBuilder.BOOST_FIELD.match(currentFieldName)) {
+                } else if (AbstractQueryBuilder.BOOST_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     boost = parser.floatValue();
-                } else if (AbstractQueryBuilder.NAME_FIELD.match(currentFieldName)) {
+                } else if (AbstractQueryBuilder.NAME_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     queryName = parser.text();
-                } else if (MIN_SCORE_FIELD.match(currentFieldName)) {
+                } else if (MIN_SCORE_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     minScore = parser.floatValue();
                 } else {
                     if (singleFunctionFound) {
@@ -515,7 +511,7 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
                         String errorString = "already found [functions] array, now encountering [" + currentFieldName + "].";
                         handleMisplacedFunctionsDeclaration(parser.getTokenLocation(), errorString);
                     }
-                    if (WEIGHT_FIELD.match(currentFieldName)) {
+                    if (WEIGHT_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                         filterFunctionBuilders.add(
                                 new FunctionScoreQueryBuilder.FilterFunctionBuilder(new WeightBuilder().setWeight(parser.floatValue())));
                         singleFunctionFound = true;
@@ -569,7 +565,7 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
                     if (token == XContentParser.Token.FIELD_NAME) {
                         currentFieldName = parser.currentName();
                     } else if (token == XContentParser.Token.START_OBJECT) {
-                        if (FILTER_FIELD.match(currentFieldName)) {
+                        if (FILTER_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                             filter = parseInnerQueryBuilder(parser);
                         } else {
                             if (scoreFunction != null) {
@@ -580,7 +576,7 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
                             scoreFunction = parser.namedObject(ScoreFunctionBuilder.class, currentFieldName, null);
                         }
                     } else if (token.isValue()) {
-                        if (WEIGHT_FIELD.match(currentFieldName)) {
+                        if (WEIGHT_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                             functionWeight = parser.floatValue();
                         } else {
                             throw new ParsingException(parser.getTokenLocation(), "failed to parse [{}] query. field [{}] is not supported",

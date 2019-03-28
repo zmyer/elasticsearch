@@ -19,6 +19,16 @@
 
 package org.elasticsearch.action.ingest;
 
+import org.elasticsearch.index.VersionType;
+import org.elasticsearch.ingest.CompoundProcessor;
+import org.elasticsearch.ingest.IngestDocument;
+import org.elasticsearch.ingest.IngestService;
+import org.elasticsearch.ingest.Pipeline;
+import org.elasticsearch.ingest.Processor;
+import org.elasticsearch.ingest.TestProcessor;
+import org.elasticsearch.test.ESTestCase;
+import org.junit.Before;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -28,22 +38,14 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import org.elasticsearch.ingest.CompoundProcessor;
-import org.elasticsearch.ingest.IngestDocument;
-import org.elasticsearch.ingest.Pipeline;
-import org.elasticsearch.ingest.PipelineStore;
-import org.elasticsearch.ingest.Processor;
-import org.elasticsearch.ingest.TestProcessor;
-import org.elasticsearch.test.ESTestCase;
-import org.junit.Before;
-
 import static org.elasticsearch.action.ingest.SimulatePipelineRequest.Fields;
 import static org.elasticsearch.action.ingest.SimulatePipelineRequest.SIMULATED_PIPELINE_ID;
 import static org.elasticsearch.ingest.IngestDocument.MetaData.ID;
 import static org.elasticsearch.ingest.IngestDocument.MetaData.INDEX;
-import static org.elasticsearch.ingest.IngestDocument.MetaData.PARENT;
 import static org.elasticsearch.ingest.IngestDocument.MetaData.ROUTING;
 import static org.elasticsearch.ingest.IngestDocument.MetaData.TYPE;
+import static org.elasticsearch.ingest.IngestDocument.MetaData.VERSION;
+import static org.elasticsearch.ingest.IngestDocument.MetaData.VERSION_TYPE;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.Mockito.mock;
@@ -51,7 +53,7 @@ import static org.mockito.Mockito.when;
 
 public class SimulatePipelineRequestParsingTests extends ESTestCase {
 
-    private PipelineStore store;
+    private IngestService ingestService;
 
     @Before
     public void init() throws IOException {
@@ -60,12 +62,20 @@ public class SimulatePipelineRequestParsingTests extends ESTestCase {
         Pipeline pipeline = new Pipeline(SIMULATED_PIPELINE_ID, null, null, pipelineCompoundProcessor);
         Map<String, Processor.Factory> registry =
             Collections.singletonMap("mock_processor", (factories, tag, config) -> processor);
-        store = mock(PipelineStore.class);
-        when(store.get(SIMULATED_PIPELINE_ID)).thenReturn(pipeline);
-        when(store.getProcessorFactories()).thenReturn(registry);
+        ingestService = mock(IngestService.class);
+        when(ingestService.getPipeline(SIMULATED_PIPELINE_ID)).thenReturn(pipeline);
+        when(ingestService.getProcessorFactories()).thenReturn(registry);
     }
 
-    public void testParseUsingPipelineStore() throws Exception {
+    public void testParseUsingPipelineStoreNoType() throws Exception {
+        innerTestParseUsingPipelineStore(false);
+    }
+
+    public void testParseUsingPipelineStoreWithType() throws Exception {
+        innerTestParseUsingPipelineStore(true);
+    }
+
+    private void innerTestParseUsingPipelineStore(boolean useExplicitType) throws Exception {
         int numDocs = randomIntBetween(1, 10);
 
         Map<String, Object> requestContent = new HashMap<>();
@@ -78,7 +88,9 @@ public class SimulatePipelineRequestParsingTests extends ESTestCase {
             String type = randomAlphaOfLengthBetween(1, 10);
             String id = randomAlphaOfLengthBetween(1, 10);
             doc.put(INDEX.getFieldName(), index);
-            doc.put(TYPE.getFieldName(), type);
+            if (useExplicitType) {
+                doc.put(TYPE.getFieldName(), type);
+            }
             doc.put(ID.getFieldName(), id);
             String fieldName = randomAlphaOfLengthBetween(1, 10);
             String fieldValue = randomAlphaOfLengthBetween(1, 10);
@@ -86,19 +98,24 @@ public class SimulatePipelineRequestParsingTests extends ESTestCase {
             docs.add(doc);
             Map<String, Object> expectedDoc = new HashMap<>();
             expectedDoc.put(INDEX.getFieldName(), index);
-            expectedDoc.put(TYPE.getFieldName(), type);
+            if (useExplicitType) {
+                expectedDoc.put(TYPE.getFieldName(), type);
+            } else {
+                expectedDoc.put(TYPE.getFieldName(), "_doc");
+            }
             expectedDoc.put(ID.getFieldName(), id);
             expectedDoc.put(Fields.SOURCE, Collections.singletonMap(fieldName, fieldValue));
             expectedDocs.add(expectedDoc);
         }
 
-        SimulatePipelineRequest.Parsed actualRequest = SimulatePipelineRequest.parseWithPipelineId(SIMULATED_PIPELINE_ID, requestContent, false, store);
+        SimulatePipelineRequest.Parsed actualRequest =
+            SimulatePipelineRequest.parseWithPipelineId(SIMULATED_PIPELINE_ID, requestContent, false, ingestService);
         assertThat(actualRequest.isVerbose(), equalTo(false));
         assertThat(actualRequest.getDocuments().size(), equalTo(numDocs));
         Iterator<Map<String, Object>> expectedDocsIterator = expectedDocs.iterator();
         for (IngestDocument ingestDocument : actualRequest.getDocuments()) {
             Map<String, Object> expectedDocument = expectedDocsIterator.next();
-            Map<IngestDocument.MetaData, String> metadataMap = ingestDocument.extractMetadata();
+            Map<IngestDocument.MetaData, Object> metadataMap = ingestDocument.extractMetadata();
             assertThat(metadataMap.get(INDEX), equalTo(expectedDocument.get(INDEX.getFieldName())));
             assertThat(metadataMap.get(TYPE), equalTo(expectedDocument.get(TYPE.getFieldName())));
             assertThat(metadataMap.get(ID), equalTo(expectedDocument.get(ID.getFieldName())));
@@ -108,9 +125,20 @@ public class SimulatePipelineRequestParsingTests extends ESTestCase {
         assertThat(actualRequest.getPipeline().getId(), equalTo(SIMULATED_PIPELINE_ID));
         assertThat(actualRequest.getPipeline().getDescription(), nullValue());
         assertThat(actualRequest.getPipeline().getProcessors().size(), equalTo(1));
+        if (useExplicitType) {
+            assertWarnings("[types removal] specifying _type in pipeline simulation requests is deprecated");
+        }
     }
 
-    public void testParseWithProvidedPipeline() throws Exception {
+    public void testParseWithProvidedPipelineNoType() throws Exception {
+        innerTestParseWithProvidedPipeline(false);
+    }
+
+    public void testParseWithProvidedPipelineWithType() throws Exception {
+        innerTestParseWithProvidedPipeline(true);
+    }
+
+    private void innerTestParseWithProvidedPipeline(boolean useExplicitType) throws Exception {
         int numDocs = randomIntBetween(1, 10);
 
         Map<String, Object> requestContent = new HashMap<>();
@@ -120,17 +148,36 @@ public class SimulatePipelineRequestParsingTests extends ESTestCase {
         for (int i = 0; i < numDocs; i++) {
             Map<String, Object> doc = new HashMap<>();
             Map<String, Object> expectedDoc = new HashMap<>();
-            List<IngestDocument.MetaData> fields = Arrays.asList(INDEX, TYPE, ID, ROUTING, PARENT);
+            List<IngestDocument.MetaData> fields = Arrays.asList(INDEX, TYPE, ID, ROUTING, VERSION, VERSION_TYPE);
             for(IngestDocument.MetaData field : fields) {
-                if(randomBoolean()) {
-                    String value = randomAlphaOfLengthBetween(1, 10);
+                if (field == VERSION) {
+                    Long value = randomLong();
                     doc.put(field.getFieldName(), value);
                     expectedDoc.put(field.getFieldName(), value);
-                }
-                else {
-                    Integer value = randomIntBetween(1, 1000000);
+                } else if (field == VERSION_TYPE) {
+                    String value = VersionType.toString(
+                        randomFrom(VersionType.INTERNAL, VersionType.EXTERNAL, VersionType.EXTERNAL_GTE)
+                    );
                     doc.put(field.getFieldName(), value);
-                    expectedDoc.put(field.getFieldName(), String.valueOf(value));
+                    expectedDoc.put(field.getFieldName(), value);
+                } else if (field == TYPE) {
+                    if (useExplicitType) {
+                        String value = randomAlphaOfLengthBetween(1, 10);
+                        doc.put(field.getFieldName(), value);
+                        expectedDoc.put(field.getFieldName(), value);
+                    } else {
+                        expectedDoc.put(field.getFieldName(), "_doc");
+                    }
+                } else {
+                    if (randomBoolean()) {
+                        String value = randomAlphaOfLengthBetween(1, 10);
+                        doc.put(field.getFieldName(), value);
+                        expectedDoc.put(field.getFieldName(), value);
+                    } else {
+                        Integer value = randomIntBetween(1, 1000000);
+                        doc.put(field.getFieldName(), value);
+                        expectedDoc.put(field.getFieldName(), String.valueOf(value));
+                    }
                 }
             }
             String fieldName = randomAlphaOfLengthBetween(1, 10);
@@ -169,24 +216,27 @@ public class SimulatePipelineRequestParsingTests extends ESTestCase {
 
         requestContent.put(Fields.PIPELINE, pipelineConfig);
 
-        SimulatePipelineRequest.Parsed actualRequest = SimulatePipelineRequest.parse(requestContent, false, store);
+        SimulatePipelineRequest.Parsed actualRequest = SimulatePipelineRequest.parse(requestContent, false, ingestService);
         assertThat(actualRequest.isVerbose(), equalTo(false));
         assertThat(actualRequest.getDocuments().size(), equalTo(numDocs));
         Iterator<Map<String, Object>> expectedDocsIterator = expectedDocs.iterator();
         for (IngestDocument ingestDocument : actualRequest.getDocuments()) {
             Map<String, Object> expectedDocument = expectedDocsIterator.next();
-            Map<IngestDocument.MetaData, String> metadataMap = ingestDocument.extractMetadata();
+            Map<IngestDocument.MetaData, Object> metadataMap = ingestDocument.extractMetadata();
             assertThat(metadataMap.get(INDEX), equalTo(expectedDocument.get(INDEX.getFieldName())));
-            assertThat(metadataMap.get(TYPE), equalTo(expectedDocument.get(TYPE.getFieldName())));
             assertThat(metadataMap.get(ID), equalTo(expectedDocument.get(ID.getFieldName())));
             assertThat(metadataMap.get(ROUTING), equalTo(expectedDocument.get(ROUTING.getFieldName())));
-            assertThat(metadataMap.get(PARENT), equalTo(expectedDocument.get(PARENT.getFieldName())));
+            assertThat(metadataMap.get(VERSION), equalTo(expectedDocument.get(VERSION.getFieldName())));
+            assertThat(metadataMap.get(VERSION_TYPE), equalTo(expectedDocument.get(VERSION_TYPE.getFieldName())));
             assertThat(ingestDocument.getSourceAndMetadata(), equalTo(expectedDocument.get(Fields.SOURCE)));
         }
 
         assertThat(actualRequest.getPipeline().getId(), equalTo(SIMULATED_PIPELINE_ID));
         assertThat(actualRequest.getPipeline().getDescription(), nullValue());
         assertThat(actualRequest.getPipeline().getProcessors().size(), equalTo(numProcessors));
+        if (useExplicitType) {
+            assertWarnings("[types removal] specifying _type in pipeline simulation requests is deprecated");
+        }
     }
 
     public void testNullPipelineId() {
@@ -194,7 +244,7 @@ public class SimulatePipelineRequestParsingTests extends ESTestCase {
         List<Map<String, Object>> docs = new ArrayList<>();
         requestContent.put(Fields.DOCS, docs);
         Exception e = expectThrows(IllegalArgumentException.class,
-            () -> SimulatePipelineRequest.parseWithPipelineId(null, requestContent, false, store));
+            () -> SimulatePipelineRequest.parseWithPipelineId(null, requestContent, false, ingestService));
         assertThat(e.getMessage(), equalTo("param [pipeline] is null"));
     }
 
@@ -204,7 +254,7 @@ public class SimulatePipelineRequestParsingTests extends ESTestCase {
         List<Map<String, Object>> docs = new ArrayList<>();
         requestContent.put(Fields.DOCS, docs);
         Exception e = expectThrows(IllegalArgumentException.class,
-            () -> SimulatePipelineRequest.parseWithPipelineId(pipelineId, requestContent, false, store));
+            () -> SimulatePipelineRequest.parseWithPipelineId(pipelineId, requestContent, false, ingestService));
         assertThat(e.getMessage(), equalTo("pipeline [" + pipelineId + "] does not exist"));
     }
 }

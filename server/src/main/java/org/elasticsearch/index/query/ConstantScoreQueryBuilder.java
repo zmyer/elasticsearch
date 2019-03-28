@@ -97,11 +97,7 @@ public class ConstantScoreQueryBuilder extends AbstractQueryBuilder<ConstantScor
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else if (token == XContentParser.Token.START_OBJECT) {
-                if (INNER_QUERY_FIELD.match(currentFieldName)) {
-                    if (queryFound) {
-                        throw new ParsingException(parser.getTokenLocation(), "[" + ConstantScoreQueryBuilder.NAME + "]"
-                                + " accepts only one 'filter' element.");
-                    }
+                if (INNER_QUERY_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     query = parseInnerQueryBuilder(parser);
                     queryFound = true;
                 } else {
@@ -109,9 +105,9 @@ public class ConstantScoreQueryBuilder extends AbstractQueryBuilder<ConstantScor
                             "[constant_score] query does not support [" + currentFieldName + "]");
                 }
             } else if (token.isValue()) {
-                if (AbstractQueryBuilder.NAME_FIELD.match(currentFieldName)) {
+                if (AbstractQueryBuilder.NAME_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     queryName = parser.text();
-                } else if (AbstractQueryBuilder.BOOST_FIELD.match(currentFieldName)) {
+                } else if (AbstractQueryBuilder.BOOST_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     boost = parser.floatValue();
                 } else {
                     throw new ParsingException(parser.getTokenLocation(),
@@ -133,7 +129,7 @@ public class ConstantScoreQueryBuilder extends AbstractQueryBuilder<ConstantScor
 
     @Override
     protected Query doToQuery(QueryShardContext context) throws IOException {
-        Query innerFilter = filterBuilder.toFilter(context);
+        Query innerFilter = filterBuilder.toQuery(context);
         return new ConstantScoreQuery(innerFilter);
     }
 

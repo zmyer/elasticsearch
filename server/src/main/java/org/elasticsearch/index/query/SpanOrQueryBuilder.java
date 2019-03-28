@@ -35,6 +35,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+import static org.elasticsearch.index.query.SpanQueryBuilder.SpanQueryBuilderUtil.checkNoBoost;
+
 /**
  * Span query that matches the union of its clauses. Maps to {@link SpanOrQuery}.
  */
@@ -109,21 +111,23 @@ public class SpanOrQueryBuilder extends AbstractQueryBuilder<SpanOrQueryBuilder>
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else if (token == XContentParser.Token.START_ARRAY) {
-                if (CLAUSES_FIELD.match(currentFieldName)) {
+                if (CLAUSES_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                         QueryBuilder query = parseInnerQueryBuilder(parser);
                         if (query instanceof SpanQueryBuilder == false) {
-                            throw new ParsingException(parser.getTokenLocation(), "spanOr [clauses] must be of type span query");
+                            throw new ParsingException(parser.getTokenLocation(), "span_or [clauses] must be of type span query");
                         }
-                        clauses.add((SpanQueryBuilder) query);
+                        final SpanQueryBuilder clause = (SpanQueryBuilder) query;
+                        checkNoBoost(NAME, currentFieldName, parser, clause);
+                        clauses.add(clause);
                     }
                 } else {
                     throw new ParsingException(parser.getTokenLocation(), "[span_or] query does not support [" + currentFieldName + "]");
                 }
             } else {
-                if (AbstractQueryBuilder.BOOST_FIELD.match(currentFieldName)) {
+                if (AbstractQueryBuilder.BOOST_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     boost = parser.floatValue();
-                } else if (AbstractQueryBuilder.NAME_FIELD.match(currentFieldName)) {
+                } else if (AbstractQueryBuilder.NAME_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     queryName = parser.text();
                 } else {
                     throw new ParsingException(parser.getTokenLocation(), "[span_or] query does not support [" + currentFieldName + "]");
@@ -132,7 +136,7 @@ public class SpanOrQueryBuilder extends AbstractQueryBuilder<SpanOrQueryBuilder>
         }
 
         if (clauses.isEmpty()) {
-            throw new ParsingException(parser.getTokenLocation(), "spanOr must include [clauses]");
+            throw new ParsingException(parser.getTokenLocation(), "span_or must include [clauses]");
         }
 
         SpanOrQueryBuilder queryBuilder = new SpanOrQueryBuilder(clauses.get(0));

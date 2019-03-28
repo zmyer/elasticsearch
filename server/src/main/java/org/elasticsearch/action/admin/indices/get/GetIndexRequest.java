@@ -26,11 +26,9 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.util.ArrayUtils;
 
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.List;
 
 /**
- * A request to delete an index. Best created with {@link org.elasticsearch.client.Requests#deleteIndexRequest(String)}.
+ * A request to retrieve information about an index.
  */
 public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
     public enum Feature {
@@ -68,7 +66,6 @@ public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
     private static final Feature[] DEFAULT_FEATURES = new Feature[] { Feature.ALIASES, Feature.MAPPINGS, Feature.SETTINGS };
     private Feature[] features = DEFAULT_FEATURES;
     private boolean humanReadable = false;
-    private transient boolean flatSettings = false;
     private transient boolean includeDefaults = false;
 
     public GetIndexRequest() {
@@ -83,6 +80,7 @@ public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
             features[i] = Feature.fromId(in.readByte());
         }
         humanReadable = in.readBoolean();
+        includeDefaults = in.readBoolean();
     }
 
     public GetIndexRequest features(Feature... features) {
@@ -121,25 +119,8 @@ public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
     }
 
     /**
-     * Sets the value of "flat_settings".
-     * @param flatSettings value of "flat_settings" flag to be set
-     * @return this request
-     */
-    public GetIndexRequest flatSettings(boolean flatSettings) {
-        this.flatSettings = flatSettings;
-        return this;
-    }
-
-    /**
-     * Return settings in flat format.
-     * @return <code>true</code> if settings need to be returned in flat format; <code>false</code> otherwise.
-     */
-    public boolean flatSettings() {
-        return flatSettings;
-    }
-
-    /**
      * Sets the value of "include_defaults".
+     *
      * @param includeDefaults value of "include_defaults" to be set.
      * @return this request
      */
@@ -150,6 +131,7 @@ public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
 
     /**
      * Whether to return all default settings for each of the indices.
+     *
      * @return <code>true</code> if defaults settings for each of the indices need to returned;
      * <code>false</code> otherwise.
      */
@@ -170,6 +152,6 @@ public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
             out.writeByte(feature.id);
         }
         out.writeBoolean(humanReadable);
+        out.writeBoolean(includeDefaults);
     }
-
 }

@@ -102,13 +102,6 @@ public class BlobStoreIndexShardSnapshots implements Iterable<SnapshotFiles>, To
         this.physicalFiles = unmodifiableMap(mapBuilder);
     }
 
-    private BlobStoreIndexShardSnapshots() {
-        shardSnapshots = Collections.emptyList();
-        files = Collections.emptyMap();
-        physicalFiles = Collections.emptyMap();
-    }
-
-
     /**
      * Returns list of snapshots
      *
@@ -243,7 +236,7 @@ public class BlobStoreIndexShardSnapshots implements Iterable<SnapshotFiles>, To
                 String currentFieldName = parser.currentName();
                 token = parser.nextToken();
                 if (token == XContentParser.Token.START_ARRAY) {
-                    if (ParseFields.FILES.match(currentFieldName) == false) {
+                    if (ParseFields.FILES.match(currentFieldName, parser.getDeprecationHandler()) == false) {
                         throw new ElasticsearchParseException("unknown array [{}]", currentFieldName);
                     }
                     while (parser.nextToken() != XContentParser.Token.END_ARRAY) {
@@ -251,7 +244,7 @@ public class BlobStoreIndexShardSnapshots implements Iterable<SnapshotFiles>, To
                         files.put(fileInfo.name(), fileInfo);
                     }
                 } else if (token == XContentParser.Token.START_OBJECT) {
-                    if (ParseFields.SNAPSHOTS.match(currentFieldName) == false) {
+                    if (ParseFields.SNAPSHOTS.match(currentFieldName, parser.getDeprecationHandler()) == false) {
                         throw new ElasticsearchParseException("unknown object [{}]", currentFieldName);
                     }
                     while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
@@ -266,7 +259,7 @@ public class BlobStoreIndexShardSnapshots implements Iterable<SnapshotFiles>, To
                             if (token == XContentParser.Token.FIELD_NAME) {
                                 currentFieldName = parser.currentName();
                                 if (parser.nextToken() == XContentParser.Token.START_ARRAY) {
-                                    if (ParseFields.FILES.match(currentFieldName) == false) {
+                                    if (ParseFields.FILES.match(currentFieldName, parser.getDeprecationHandler()) == false) {
                                         throw new ElasticsearchParseException("unknown array [{}]", currentFieldName);
                                     }
                                     List<String> fileNames = new ArrayList<>();

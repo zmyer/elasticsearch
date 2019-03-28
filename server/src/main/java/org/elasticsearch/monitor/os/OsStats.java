@@ -19,7 +19,6 @@
 
 package org.elasticsearch.monitor.os;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
@@ -52,11 +51,7 @@ public class OsStats implements Writeable, ToXContentFragment {
         this.cpu = new Cpu(in);
         this.mem = new Mem(in);
         this.swap = new Swap(in);
-        if (in.getVersion().onOrAfter(Version.V_5_1_1)) {
-            this.cgroup = in.readOptionalWriteable(Cgroup::new);
-        } else {
-            this.cgroup = null;
-        }
+        this.cgroup = in.readOptionalWriteable(Cgroup::new);
     }
 
     @Override
@@ -65,9 +60,7 @@ public class OsStats implements Writeable, ToXContentFragment {
         cpu.writeTo(out);
         mem.writeTo(out);
         swap.writeTo(out);
-        if (out.getVersion().onOrAfter(Version.V_5_1_1)) {
-            out.writeOptionalWriteable(cgroup);
-        }
+        out.writeOptionalWriteable(cgroup);
     }
 
     public long getTimestamp() {
@@ -221,9 +214,9 @@ public class OsStats implements Writeable, ToXContentFragment {
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.startObject(Fields.SWAP);
-            builder.byteSizeField(Fields.TOTAL_IN_BYTES, Fields.TOTAL, getTotal());
-            builder.byteSizeField(Fields.FREE_IN_BYTES, Fields.FREE, getFree());
-            builder.byteSizeField(Fields.USED_IN_BYTES, Fields.USED, getUsed());
+            builder.humanReadableField(Fields.TOTAL_IN_BYTES, Fields.TOTAL, getTotal());
+            builder.humanReadableField(Fields.FREE_IN_BYTES, Fields.FREE, getFree());
+            builder.humanReadableField(Fields.USED_IN_BYTES, Fields.USED, getUsed());
             builder.endObject();
             return builder;
         }
@@ -273,9 +266,9 @@ public class OsStats implements Writeable, ToXContentFragment {
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.startObject(Fields.MEM);
-            builder.byteSizeField(Fields.TOTAL_IN_BYTES, Fields.TOTAL, getTotal());
-            builder.byteSizeField(Fields.FREE_IN_BYTES, Fields.FREE, getFree());
-            builder.byteSizeField(Fields.USED_IN_BYTES, Fields.USED, getUsed());
+            builder.humanReadableField(Fields.TOTAL_IN_BYTES, Fields.TOTAL, getTotal());
+            builder.humanReadableField(Fields.FREE_IN_BYTES, Fields.FREE, getFree());
+            builder.humanReadableField(Fields.USED_IN_BYTES, Fields.USED, getUsed());
             builder.field(Fields.FREE_PERCENT, getFreePercent());
             builder.field(Fields.USED_PERCENT, getUsedPercent());
             builder.endObject();
@@ -419,15 +412,9 @@ public class OsStats implements Writeable, ToXContentFragment {
             cpuCfsPeriodMicros = in.readLong();
             cpuCfsQuotaMicros = in.readLong();
             cpuStat = new CpuStat(in);
-            if (in.getVersion().onOrAfter(Version.V_6_1_0)) {
-                memoryControlGroup = in.readOptionalString();
-                memoryLimitInBytes = in.readOptionalString();
-                memoryUsageInBytes = in.readOptionalString();
-            } else {
-                memoryControlGroup = null;
-                memoryLimitInBytes = null;
-                memoryUsageInBytes = null;
-            }
+            memoryControlGroup = in.readOptionalString();
+            memoryLimitInBytes = in.readOptionalString();
+            memoryUsageInBytes = in.readOptionalString();
         }
 
         @Override
@@ -438,11 +425,9 @@ public class OsStats implements Writeable, ToXContentFragment {
             out.writeLong(cpuCfsPeriodMicros);
             out.writeLong(cpuCfsQuotaMicros);
             cpuStat.writeTo(out);
-            if (out.getVersion().onOrAfter(Version.V_6_1_0)) {
-                out.writeOptionalString(memoryControlGroup);
-                out.writeOptionalString(memoryLimitInBytes);
-                out.writeOptionalString(memoryUsageInBytes);
-            }
+            out.writeOptionalString(memoryControlGroup);
+            out.writeOptionalString(memoryLimitInBytes);
+            out.writeOptionalString(memoryUsageInBytes);
         }
 
         @Override

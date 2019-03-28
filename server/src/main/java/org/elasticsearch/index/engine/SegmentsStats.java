@@ -20,20 +20,19 @@
 package org.elasticsearch.index.engine;
 
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
-
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
+import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.unit.ByteSizeValue;
-import org.elasticsearch.common.xcontent.ToXContent.Params;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
 import java.util.Iterator;
 
-public class SegmentsStats implements Streamable, ToXContentFragment {
+public class SegmentsStats implements Streamable, Writeable, ToXContentFragment {
 
     private long count;
     private long memoryInBytes;
@@ -78,6 +77,30 @@ public class SegmentsStats implements Streamable, ToXContentFragment {
             .build();
 
     public SegmentsStats() {}
+
+    public SegmentsStats(StreamInput in) throws IOException {
+        count = in.readVLong();
+        memoryInBytes = in.readLong();
+        termsMemoryInBytes = in.readLong();
+        storedFieldsMemoryInBytes = in.readLong();
+        termVectorsMemoryInBytes = in.readLong();
+        normsMemoryInBytes = in.readLong();
+        pointsMemoryInBytes = in.readLong();
+        docValuesMemoryInBytes = in.readLong();
+        indexWriterMemoryInBytes = in.readLong();
+        versionMapMemoryInBytes = in.readLong();
+        bitsetMemoryInBytes = in.readLong();
+        maxUnsafeAutoIdTimestamp = in.readLong();
+
+        int size = in.readVInt();
+        ImmutableOpenMap.Builder<String, Long> map = ImmutableOpenMap.builder(size);
+        for (int i = 0; i < size; i++) {
+            String key = in.readString();
+            Long value = in.readLong();
+            map.put(key, value);
+        }
+        fileSizes = map.build();
+    }
 
     public void add(long count, long memoryInBytes) {
         this.count += count;
@@ -291,22 +314,22 @@ public class SegmentsStats implements Streamable, ToXContentFragment {
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(Fields.SEGMENTS);
         builder.field(Fields.COUNT, count);
-        builder.byteSizeField(Fields.MEMORY_IN_BYTES, Fields.MEMORY, memoryInBytes);
-        builder.byteSizeField(Fields.TERMS_MEMORY_IN_BYTES, Fields.TERMS_MEMORY, termsMemoryInBytes);
-        builder.byteSizeField(Fields.STORED_FIELDS_MEMORY_IN_BYTES, Fields.STORED_FIELDS_MEMORY, storedFieldsMemoryInBytes);
-        builder.byteSizeField(Fields.TERM_VECTORS_MEMORY_IN_BYTES, Fields.TERM_VECTORS_MEMORY, termVectorsMemoryInBytes);
-        builder.byteSizeField(Fields.NORMS_MEMORY_IN_BYTES, Fields.NORMS_MEMORY, normsMemoryInBytes);
-        builder.byteSizeField(Fields.POINTS_MEMORY_IN_BYTES, Fields.POINTS_MEMORY, pointsMemoryInBytes);
-        builder.byteSizeField(Fields.DOC_VALUES_MEMORY_IN_BYTES, Fields.DOC_VALUES_MEMORY, docValuesMemoryInBytes);
-        builder.byteSizeField(Fields.INDEX_WRITER_MEMORY_IN_BYTES, Fields.INDEX_WRITER_MEMORY, indexWriterMemoryInBytes);
-        builder.byteSizeField(Fields.VERSION_MAP_MEMORY_IN_BYTES, Fields.VERSION_MAP_MEMORY, versionMapMemoryInBytes);
-        builder.byteSizeField(Fields.FIXED_BIT_SET_MEMORY_IN_BYTES, Fields.FIXED_BIT_SET, bitsetMemoryInBytes);
+        builder.humanReadableField(Fields.MEMORY_IN_BYTES, Fields.MEMORY, getMemory());
+        builder.humanReadableField(Fields.TERMS_MEMORY_IN_BYTES, Fields.TERMS_MEMORY, getTermsMemory());
+        builder.humanReadableField(Fields.STORED_FIELDS_MEMORY_IN_BYTES, Fields.STORED_FIELDS_MEMORY, getStoredFieldsMemory());
+        builder.humanReadableField(Fields.TERM_VECTORS_MEMORY_IN_BYTES, Fields.TERM_VECTORS_MEMORY, getTermVectorsMemory());
+        builder.humanReadableField(Fields.NORMS_MEMORY_IN_BYTES, Fields.NORMS_MEMORY, getNormsMemory());
+        builder.humanReadableField(Fields.POINTS_MEMORY_IN_BYTES, Fields.POINTS_MEMORY, getPointsMemory());
+        builder.humanReadableField(Fields.DOC_VALUES_MEMORY_IN_BYTES, Fields.DOC_VALUES_MEMORY, getDocValuesMemory());
+        builder.humanReadableField(Fields.INDEX_WRITER_MEMORY_IN_BYTES, Fields.INDEX_WRITER_MEMORY, getIndexWriterMemory());
+        builder.humanReadableField(Fields.VERSION_MAP_MEMORY_IN_BYTES, Fields.VERSION_MAP_MEMORY, getVersionMapMemory());
+        builder.humanReadableField(Fields.FIXED_BIT_SET_MEMORY_IN_BYTES, Fields.FIXED_BIT_SET, getBitsetMemory());
         builder.field(Fields.MAX_UNSAFE_AUTO_ID_TIMESTAMP, maxUnsafeAutoIdTimestamp);
         builder.startObject(Fields.FILE_SIZES);
         for (Iterator<ObjectObjectCursor<String, Long>> it = fileSizes.iterator(); it.hasNext();) {
             ObjectObjectCursor<String, Long> entry = it.next();
             builder.startObject(entry.key);
-            builder.byteSizeField(Fields.SIZE_IN_BYTES, Fields.SIZE, entry.value);
+            builder.humanReadableField(Fields.SIZE_IN_BYTES, Fields.SIZE, new ByteSizeValue(entry.value));
             builder.field(Fields.DESCRIPTION, fileDescriptions.getOrDefault(entry.key, "Others"));
             builder.endObject();
         }
@@ -347,27 +370,7 @@ public class SegmentsStats implements Streamable, ToXContentFragment {
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
-        count = in.readVLong();
-        memoryInBytes = in.readLong();
-        termsMemoryInBytes = in.readLong();
-        storedFieldsMemoryInBytes = in.readLong();
-        termVectorsMemoryInBytes = in.readLong();
-        normsMemoryInBytes = in.readLong();
-        pointsMemoryInBytes = in.readLong();
-        docValuesMemoryInBytes = in.readLong();
-        indexWriterMemoryInBytes = in.readLong();
-        versionMapMemoryInBytes = in.readLong();
-        bitsetMemoryInBytes = in.readLong();
-        maxUnsafeAutoIdTimestamp = in.readLong();
-
-        int size = in.readVInt();
-        ImmutableOpenMap.Builder<String, Long> map = ImmutableOpenMap.builder(size);
-        for (int i = 0; i < size; i++) {
-            String key = in.readString();
-            Long value = in.readLong();
-            map.put(key, value);
-        }
-        fileSizes = map.build();
+        throw new UnsupportedOperationException("usage of Streamable is to be replaced by Writeable");
     }
 
     @Override
@@ -390,5 +393,9 @@ public class SegmentsStats implements Streamable, ToXContentFragment {
             out.writeString(entry.key);
             out.writeLong(entry.value.longValue());
         }
+    }
+
+    public void clearFileSizes() {
+        fileSizes = ImmutableOpenMap.of();
     }
 }

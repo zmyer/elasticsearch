@@ -30,8 +30,10 @@ import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.RandomIndexWriter;
+import org.apache.lucene.search.DocValuesFieldExistsQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
+import org.apache.lucene.search.TotalHits;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.NumericUtils;
@@ -39,16 +41,22 @@ import org.elasticsearch.common.network.InetAddresses;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.MockBigArrays;
 import org.elasticsearch.common.util.MockPageCacheRecycler;
-import org.elasticsearch.index.IndexSettings;
+import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.IpFieldMapper;
 import org.elasticsearch.index.mapper.KeywordFieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.mapper.NumberFieldMapper;
+import org.elasticsearch.index.mapper.SeqNoFieldMapper;
+import org.elasticsearch.index.mapper.TypeFieldMapper;
+import org.elasticsearch.index.mapper.Uid;
+import org.elasticsearch.index.query.MatchAllQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
+import org.elasticsearch.script.Script;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.aggregations.AggregationBuilder;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
+import org.elasticsearch.search.aggregations.AggregationExecutionException;
 import org.elasticsearch.search.aggregations.Aggregator;
 import org.elasticsearch.search.aggregations.AggregatorTestCase;
 import org.elasticsearch.search.aggregations.BucketOrder;
@@ -57,11 +65,18 @@ import org.elasticsearch.search.aggregations.InternalMultiBucketAggregation;
 import org.elasticsearch.search.aggregations.bucket.MultiBucketsAggregation;
 import org.elasticsearch.search.aggregations.bucket.filter.Filter;
 import org.elasticsearch.search.aggregations.bucket.filter.FilterAggregationBuilder;
+import org.elasticsearch.search.aggregations.bucket.filter.InternalFilter;
 import org.elasticsearch.search.aggregations.bucket.global.GlobalAggregationBuilder;
 import org.elasticsearch.search.aggregations.bucket.global.InternalGlobal;
-import org.elasticsearch.search.aggregations.metrics.tophits.InternalTopHits;
-import org.elasticsearch.search.aggregations.metrics.tophits.TopHitsAggregationBuilder;
+import org.elasticsearch.search.aggregations.bucket.nested.InternalNested;
+import org.elasticsearch.search.aggregations.bucket.nested.NestedAggregationBuilder;
+import org.elasticsearch.search.aggregations.metrics.InternalTopHits;
+import org.elasticsearch.search.aggregations.metrics.TopHitsAggregationBuilder;
+import org.elasticsearch.search.aggregations.pipeline.BucketScriptPipelineAggregationBuilder;
+import org.elasticsearch.search.aggregations.support.AggregationInspectionHelper;
 import org.elasticsearch.search.aggregations.support.ValueType;
+import org.elasticsearch.search.sort.FieldSortBuilder;
+import org.elasticsearch.search.sort.ScoreSortBuilder;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -74,6 +89,9 @@ import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
+import static org.elasticsearch.index.mapper.SeqNoFieldMapper.PRIMARY_TERM_NAME;
+import static org.elasticsearch.search.aggregations.AggregationBuilders.terms;
+import static org.elasticsearch.search.aggregations.PipelineAggregatorBuilders.bucketScript;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.instanceOf;
@@ -144,12 +162,16 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                 document.add(new SortedSetDocValuesField("string", new BytesRef("b")));
                 indexWriter.addDocument(document);
                 document = new Document();
+                document.add(new SortedSetDocValuesField("string", new BytesRef("")));
                 document.add(new SortedSetDocValuesField("string", new BytesRef("c")));
                 document.add(new SortedSetDocValuesField("string", new BytesRef("a")));
                 indexWriter.addDocument(document);
                 document = new Document();
                 document.add(new SortedSetDocValuesField("string", new BytesRef("b")));
                 document.add(new SortedSetDocValuesField("string", new BytesRef("d")));
+                indexWriter.addDocument(document);
+                document = new Document();
+                document.add(new SortedSetDocValuesField("string", new BytesRef("")));
                 indexWriter.addDocument(document);
                 try (IndexReader indexReader = maybeWrapReaderEs(indexWriter.getReader())) {
                     IndexSearcher indexSearcher = newIndexSearcher(indexReader);
@@ -167,15 +189,18 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                         indexSearcher.search(new MatchAllDocsQuery(), aggregator);
                         aggregator.postCollection();
                         Terms result = (Terms) aggregator.buildAggregation(0L);
-                        assertEquals(4, result.getBuckets().size());
-                        assertEquals("a", result.getBuckets().get(0).getKeyAsString());
+                        assertEquals(5, result.getBuckets().size());
+                        assertEquals("", result.getBuckets().get(0).getKeyAsString());
                         assertEquals(2L, result.getBuckets().get(0).getDocCount());
-                        assertEquals("b", result.getBuckets().get(1).getKeyAsString());
+                        assertEquals("a", result.getBuckets().get(1).getKeyAsString());
                         assertEquals(2L, result.getBuckets().get(1).getDocCount());
-                        assertEquals("c", result.getBuckets().get(2).getKeyAsString());
-                        assertEquals(1L, result.getBuckets().get(2).getDocCount());
-                        assertEquals("d", result.getBuckets().get(3).getKeyAsString());
+                        assertEquals("b", result.getBuckets().get(2).getKeyAsString());
+                        assertEquals(2L, result.getBuckets().get(2).getDocCount());
+                        assertEquals("c", result.getBuckets().get(3).getKeyAsString());
                         assertEquals(1L, result.getBuckets().get(3).getDocCount());
+                        assertEquals("d", result.getBuckets().get(4).getKeyAsString());
+                        assertEquals(1L, result.getBuckets().get(4).getDocCount());
+                        assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
                     }
                 }
             }
@@ -255,6 +280,7 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                     assertEquals(1L, result.getBuckets().get(8).getDocCount());
                     assertEquals("val009", result.getBuckets().get(9).getKeyAsString());
                     assertEquals(1L, result.getBuckets().get(9).getDocCount());
+                    assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
 
                     MappedFieldType fieldType2 = new KeywordFieldMapper.KeywordFieldType();
                     fieldType2.setName("sv_field");
@@ -281,6 +307,7 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                     assertEquals(1L, result.getBuckets().get(3).getDocCount());
                     assertEquals("val009", result.getBuckets().get(4).getKeyAsString());
                     assertEquals(1L, result.getBuckets().get(4).getDocCount());
+                    assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
 
                     aggregationBuilder = new TermsAggregationBuilder("_name", ValueType.STRING)
                         .executionHint(executionHint)
@@ -310,6 +337,7 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                     assertEquals(1L, result.getBuckets().get(6).getDocCount());
                     assertEquals("val009", result.getBuckets().get(7).getKeyAsString());
                     assertEquals(1L, result.getBuckets().get(7).getDocCount());
+                    assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
 
                     aggregationBuilder = new TermsAggregationBuilder("_name", ValueType.STRING)
                         .executionHint(executionHint)
@@ -326,6 +354,7 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                     assertEquals(1L, result.getBuckets().get(0).getDocCount());
                     assertEquals("val011", result.getBuckets().get(1).getKeyAsString());
                     assertEquals(1L, result.getBuckets().get(1).getDocCount());
+                    assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
 
                     aggregationBuilder = new TermsAggregationBuilder("_name", ValueType.STRING)
                         .executionHint(executionHint)
@@ -342,6 +371,7 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                     assertEquals(1L, result.getBuckets().get(0).getDocCount());
                     assertEquals("val010", result.getBuckets().get(1).getKeyAsString());
                     assertEquals(1L, result.getBuckets().get(1).getDocCount());
+                    assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
 
                     aggregationBuilder = new TermsAggregationBuilder("_name", ValueType.STRING)
                         .executionHint(executionHint)
@@ -359,6 +389,7 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                     assertEquals(1L, result.getBuckets().get(0).getDocCount());
                     assertEquals("val010", result.getBuckets().get(1).getKeyAsString());
                     assertEquals(1L, result.getBuckets().get(1).getDocCount());
+                    assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
                 }
             }
         }
@@ -413,6 +444,7 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                     assertEquals(1L, result.getBuckets().get(0).getDocCount());
                     assertEquals(5L, result.getBuckets().get(1).getKey());
                     assertEquals(1L, result.getBuckets().get(1).getDocCount());
+                    assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
 
                     aggregationBuilder = new TermsAggregationBuilder("_name", ValueType.LONG)
                         .executionHint(executionHint)
@@ -433,6 +465,7 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                     assertEquals(1L, result.getBuckets().get(2).getDocCount());
                     assertEquals(4L, result.getBuckets().get(3).getKey());
                     assertEquals(1L, result.getBuckets().get(3).getDocCount());
+                    assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
 
                     fieldType = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.DOUBLE);
                     fieldType.setName("double_field");
@@ -452,6 +485,7 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                     assertEquals(1L, result.getBuckets().get(0).getDocCount());
                     assertEquals(5.0, result.getBuckets().get(1).getKey());
                     assertEquals(1L, result.getBuckets().get(1).getDocCount());
+                    assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
 
                     aggregationBuilder = new TermsAggregationBuilder("_name", ValueType.DOUBLE)
                         .executionHint(executionHint)
@@ -472,6 +506,7 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                     assertEquals(1L, result.getBuckets().get(2).getDocCount());
                     assertEquals(4.0, result.getBuckets().get(3).getKey());
                     assertEquals(1L, result.getBuckets().get(3).getDocCount());
+                    assertTrue(AggregationInspectionHelper.hasValue((InternalTerms)result));
                 }
             }
         }
@@ -800,12 +835,12 @@ public class TermsAggregatorTests extends AggregatorTestCase {
                 fieldType1.setHasDocValues(true);
 
                 MappedFieldType fieldType2 = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.LONG);
-                fieldType1.setName("another_long");
-                fieldType1.setHasDocValues(true);
+                fieldType2.setName("another_long");
+                fieldType2.setHasDocValues(true);
 
                 MappedFieldType fieldType3 = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.DOUBLE);
-                fieldType1.setName("another_double");
-                fieldType1.setHasDocValues(true);
+                fieldType3.setName("another_double");
+                fieldType3.setHasDocValues(true);
                 try (IndexReader indexReader = maybeWrapReaderEs(indexWriter.getReader())) {
                     IndexSearcher indexSearcher = newIndexSearcher(indexReader);
                     ValueType[] valueTypes = new ValueType[]{ValueType.STRING, ValueType.LONG, ValueType.DOUBLE};
@@ -998,6 +1033,127 @@ public class TermsAggregatorTests extends AggregatorTestCase {
             }
         }
     }
+
+    public void testWithNestedAggregations() throws IOException {
+        try (Directory directory = newDirectory()) {
+            try (RandomIndexWriter indexWriter = new RandomIndexWriter(random(), directory)) {
+                for (int i = 0; i < 10; i++) {
+                    int[] nestedValues = new int[i];
+                    for (int j = 0; j < i; j++) {
+                        nestedValues[j] = j;
+                    }
+                    indexWriter.addDocuments(generateDocsWithNested(Integer.toString(i), i, nestedValues));
+                }
+                indexWriter.commit();
+                for (Aggregator.SubAggCollectionMode mode : Aggregator.SubAggCollectionMode.values()) {
+                    for (boolean withScore : new boolean[]{true, false}) {
+                        NestedAggregationBuilder nested = new NestedAggregationBuilder("nested", "nested_object")
+                            .subAggregation(new TermsAggregationBuilder("terms", ValueType.LONG)
+                                .field("nested_value")
+                                // force the breadth_first mode
+                                .collectMode(mode)
+                                .order(BucketOrder.key(true))
+                                .subAggregation(
+                                    new TopHitsAggregationBuilder("top_hits")
+                                        .sort(withScore ? new ScoreSortBuilder() : new FieldSortBuilder("_doc"))
+                                        .storedField("_none_")
+                                )
+                            );
+                        MappedFieldType fieldType = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.LONG);
+                        fieldType.setHasDocValues(true);
+                        fieldType.setName("nested_value");
+                        try (IndexReader indexReader = wrap(DirectoryReader.open(directory))) {
+                            {
+                                InternalNested result = search(newSearcher(indexReader, false, true),
+                                    // match root document only
+                                    new DocValuesFieldExistsQuery(PRIMARY_TERM_NAME), nested, fieldType);
+                                InternalMultiBucketAggregation<?, ?> terms = result.getAggregations().get("terms");
+                                assertNestedTopHitsScore(terms, withScore);
+                            }
+
+                            {
+                                FilterAggregationBuilder filter = new FilterAggregationBuilder("filter", new MatchAllQueryBuilder())
+                                    .subAggregation(nested);
+                                InternalFilter result = search(newSearcher(indexReader, false, true),
+                                    // match root document only
+                                    new DocValuesFieldExistsQuery(PRIMARY_TERM_NAME), filter, fieldType);
+                                InternalNested nestedResult = result.getAggregations().get("nested");
+                                InternalMultiBucketAggregation<?, ?> terms = nestedResult.getAggregations().get("terms");
+                                assertNestedTopHitsScore(terms, withScore);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void assertNestedTopHitsScore(InternalMultiBucketAggregation<?, ?> terms, boolean withScore) {
+        assertThat(terms.getBuckets().size(), equalTo(9));
+        int ptr = 9;
+        for (MultiBucketsAggregation.Bucket bucket : terms.getBuckets()) {
+            InternalTopHits topHits = bucket.getAggregations().get("top_hits");
+            assertThat(topHits.getHits().getTotalHits().value, equalTo((long) ptr));
+            assertEquals(TotalHits.Relation.EQUAL_TO, topHits.getHits().getTotalHits().relation);
+            if (withScore) {
+                assertThat(topHits.getHits().getMaxScore(), equalTo(1f));
+            } else {
+                assertThat(topHits.getHits().getMaxScore(), equalTo(Float.NaN));
+            }
+            --ptr;
+        }
+    }
+
+    public void testOrderByPipelineAggregation() throws Exception {
+        try (Directory directory = newDirectory()) {
+            try (RandomIndexWriter indexWriter = new RandomIndexWriter(random(), directory)) {
+                try (IndexReader indexReader = maybeWrapReaderEs(indexWriter.getReader())) {
+                    IndexSearcher indexSearcher = newIndexSearcher(indexReader);
+
+                    BucketScriptPipelineAggregationBuilder bucketScriptAgg = bucketScript(
+                        "script", new Script("2.718"));
+                    TermsAggregationBuilder termsAgg = terms("terms")
+                        .field("field")
+                        .valueType(ValueType.STRING)
+                        .order(BucketOrder.aggregation("script", true))
+                        .subAggregation(bucketScriptAgg);
+
+                    MappedFieldType fieldType = new KeywordFieldMapper.KeywordFieldType();
+                    fieldType.setName("field");
+                    fieldType.setHasDocValues(true);
+
+                    AggregationExecutionException e = expectThrows(AggregationExecutionException.class,
+                        () -> createAggregator(termsAgg, indexSearcher, fieldType));
+                    assertEquals("Invalid aggregator order path [script]. The provided aggregation [script] " +
+                        "either does not exist, or is a pipeline aggregation and cannot be used to sort the buckets.",
+                        e.getMessage());
+                }
+            }
+        }
+    }
+
+    private final SeqNoFieldMapper.SequenceIDFields sequenceIDFields = SeqNoFieldMapper.SequenceIDFields.emptySeqID();
+    private List<Document> generateDocsWithNested(String id, int value, int[] nestedValues) {
+        List<Document> documents = new ArrayList<>();
+
+        for (int nestedValue : nestedValues) {
+            Document document = new Document();
+            document.add(new Field(IdFieldMapper.NAME, Uid.encodeId(id), IdFieldMapper.Defaults.NESTED_FIELD_TYPE));
+            document.add(new Field(TypeFieldMapper.NAME, "__nested_object", TypeFieldMapper.Defaults.FIELD_TYPE));
+            document.add(new SortedNumericDocValuesField("nested_value", nestedValue));
+            documents.add(document);
+        }
+
+        Document document = new Document();
+        document.add(new Field(IdFieldMapper.NAME, Uid.encodeId(id), IdFieldMapper.Defaults.FIELD_TYPE));
+        document.add(new Field(TypeFieldMapper.NAME, "docs", TypeFieldMapper.Defaults.FIELD_TYPE));
+        document.add(new SortedNumericDocValuesField("value", value));
+        document.add(sequenceIDFields.primaryTerm);
+        documents.add(document);
+
+        return documents;
+    }
+
 
     private IndexReader createIndexWithLongs() throws IOException {
         Directory directory = newDirectory();

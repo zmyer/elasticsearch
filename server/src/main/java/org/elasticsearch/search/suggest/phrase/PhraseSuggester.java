@@ -21,7 +21,7 @@ package org.elasticsearch.search.suggest.phrase;
 
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.MultiFields;
+import org.apache.lucene.index.MultiTerms;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.spell.DirectSpellChecker;
@@ -30,6 +30,7 @@ import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.CharsRefBuilder;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.text.Text;
+import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.query.AbstractQueryBuilder;
@@ -68,7 +69,7 @@ public final class PhraseSuggester extends Suggester<PhraseSuggestionContext> {
     @Override
     public Suggestion<? extends Entry<? extends Option>> innerExecute(String name, PhraseSuggestionContext suggestion,
             IndexSearcher searcher, CharsRefBuilder spare) throws IOException {
-        double realWordErrorLikelihood = suggestion.realworldErrorLikelyhood();
+        double realWordErrorLikelihood = suggestion.realworldErrorLikelihood();
         final PhraseSuggestion response = new PhraseSuggestion(name, suggestion.getSize());
         final IndexReader indexReader = searcher.getIndexReader();
         List<PhraseSuggestionContext.DirectCandidateGenerator>  generators = suggestion.generators();
@@ -77,14 +78,14 @@ public final class PhraseSuggester extends Suggester<PhraseSuggestionContext> {
         for (int i = 0; i < numGenerators; i++) {
             PhraseSuggestionContext.DirectCandidateGenerator generator = generators.get(i);
             DirectSpellChecker directSpellChecker = generator.createDirectSpellChecker();
-            Terms terms = MultiFields.getTerms(indexReader, generator.field());
+            Terms terms = MultiTerms.getTerms(indexReader, generator.field());
             if (terms !=  null) {
                 gens.add(new DirectCandidateGenerator(directSpellChecker, generator.field(), generator.suggestMode(),
                         indexReader, realWordErrorLikelihood, generator.size(), generator.preFilter(), generator.postFilter(), terms));
             }
         }
         final String suggestField = suggestion.getField();
-        final Terms suggestTerms = MultiFields.getTerms(indexReader, suggestField);
+        final Terms suggestTerms = MultiTerms.getTerms(indexReader, suggestField);
         if (gens.size() > 0 && suggestTerms != null) {
             final NoisyChannelSpellChecker checker = new NoisyChannelSpellChecker(realWordErrorLikelihood, suggestion.getRequireUnigram(),
                     suggestion.getTokenLimit());
@@ -115,8 +116,8 @@ public final class PhraseSuggester extends Suggester<PhraseSuggestionContext> {
                     vars.put(SUGGESTION_TEMPLATE_VAR_NAME, spare.toString());
                     QueryShardContext shardContext = suggestion.getShardContext();
                     final String querySource = scriptFactory.newInstance(vars).execute();
-                    try (XContentParser parser = XContentFactory.xContent(querySource).createParser(shardContext.getXContentRegistry(),
-                            querySource)) {
+                    try (XContentParser parser = XContentFactory.xContent(querySource)
+                            .createParser(shardContext.getXContentRegistry(), LoggingDeprecationHandler.INSTANCE, querySource)) {
                         QueryBuilder innerQueryBuilder = AbstractQueryBuilder.parseInnerQueryBuilder(parser);
                         final ParsedQuery parsedQuery = shardContext.toQuery(innerQueryBuilder);
                         collateMatch = Lucene.exists(searcher, parsedQuery.query());
@@ -132,9 +133,9 @@ public final class PhraseSuggester extends Suggester<PhraseSuggestionContext> {
                     highlighted = new Text(spare.toString());
                 }
                 if (collatePrune) {
-                    resultEntry.addOption(new Suggestion.Entry.Option(phrase, highlighted, (float) (correction.score), collateMatch));
+                    resultEntry.addOption(new PhraseSuggestion.Entry.Option(phrase, highlighted, (float) (correction.score), collateMatch));
                 } else {
-                    resultEntry.addOption(new Suggestion.Entry.Option(phrase, highlighted, (float) (correction.score)));
+                    resultEntry.addOption(new PhraseSuggestion.Entry.Option(phrase, highlighted, (float) (correction.score)));
                 }
             }
         } else {

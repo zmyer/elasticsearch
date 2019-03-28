@@ -16,58 +16,37 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.action.admin.indices.close;
 
-import org.elasticsearch.action.support.master.AcknowledgedResponse;
+import org.elasticsearch.Version;
+import org.elasticsearch.action.support.master.ShardsAcknowledgedResponse;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.xcontent.ConstructingObjectParser;
-import org.elasticsearch.common.xcontent.ToXContentObject;
-import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.XContentParser;
 
 import java.io.IOException;
 
-/**
- * A response for a close index action.
- */
-public class CloseIndexResponse extends AcknowledgedResponse implements ToXContentObject {
-    private static final ConstructingObjectParser<CloseIndexResponse, Void> PARSER = new ConstructingObjectParser<>("close_index", true,
-            args -> new CloseIndexResponse((boolean) args[0]));
-
-    static {
-        declareAcknowledgedField(PARSER);
-    }
+public class CloseIndexResponse extends ShardsAcknowledgedResponse {
 
     CloseIndexResponse() {
     }
 
-    CloseIndexResponse(boolean acknowledged) {
-        super(acknowledged);
+    public CloseIndexResponse(final boolean acknowledged, final boolean shardsAcknowledged) {
+        super(acknowledged, shardsAcknowledged);
     }
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
-        readAcknowledged(in);
+        if (in.getVersion().onOrAfter(Version.V_7_1_0)) {
+            readShardsAcknowledged(in);
+        }
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        writeAcknowledged(out);
-    }
-
-    @Override
-    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.startObject();
-        addAcknowledgedField(builder);
-        builder.endObject();
-        return builder;
-    }
-
-    public static CloseIndexResponse fromXContent(XContentParser parser) throws IOException {
-        return PARSER.apply(parser, null);
+        if (out.getVersion().onOrAfter(Version.V_7_1_0)) {
+            writeShardsAcknowledged(out);
+        }
     }
 }

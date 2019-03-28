@@ -26,6 +26,8 @@ import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.Scorable;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.search.join.BitSetProducer;
@@ -47,7 +49,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
-class NestedAggregator extends BucketsAggregator implements SingleBucketAggregator {
+public class NestedAggregator extends BucketsAggregator implements SingleBucketAggregator {
 
     static final ParseField PATH_FIELD = new ParseField("path");
 
@@ -75,7 +77,7 @@ class NestedAggregator extends BucketsAggregator implements SingleBucketAggregat
         IndexReaderContext topLevelContext = ReaderUtil.getTopLevelContext(ctx);
         IndexSearcher searcher = new IndexSearcher(topLevelContext);
         searcher.setQueryCache(null);
-        Weight weight = searcher.createNormalizedWeight(childFilter, false);
+        Weight weight = searcher.createWeight(searcher.rewrite(childFilter), ScoreMode.COMPLETE_NO_SCORES, 1f);
         Scorer childDocsScorer = weight.scorer(ctx);
 
         final BitSet parentDocs = parentFilter.getBitSet(ctx);
@@ -140,13 +142,21 @@ class NestedAggregator extends BucketsAggregator implements SingleBucketAggregat
         final DocIdSetIterator childDocs;
         final LongArrayList bucketBuffer = new LongArrayList();
 
+        Scorable scorer;
         int currentParentDoc = -1;
+        final CachedScorable cachedScorer = new CachedScorable();
 
         BufferingNestedLeafBucketCollector(LeafBucketCollector sub, BitSet parentDocs, DocIdSetIterator childDocs) {
             super(sub, null);
             this.sub = sub;
             this.parentDocs = parentDocs;
             this.childDocs = childDocs;
+        }
+
+        @Override
+        public void setScorer(Scorable scorer) throws IOException {
+            this.scorer = scorer;
+            super.setScorer(cachedScorer);
         }
 
         @Override
@@ -159,7 +169,12 @@ class NestedAggregator extends BucketsAggregator implements SingleBucketAggregat
 
             if (currentParentDoc != parentDoc) {
                 processBufferedChildBuckets();
+                if (scoreMode().needsScores()) {
+                    // cache the score of the current parent
+                    cachedScorer.score = scorer.score();
+                }
                 currentParentDoc = parentDoc;
+
             }
             bucketBuffer.add(bucket);
         }
@@ -177,6 +192,7 @@ class NestedAggregator extends BucketsAggregator implements SingleBucketAggregat
             }
 
             for (; childDocId < currentParentDoc; childDocId = childDocs.nextDoc()) {
+                cachedScorer.doc = childDocId;
                 final long[] buffer = bucketBuffer.buffer;
                 final int size = bucketBuffer.size();
                 for (int i = 0; i < size; i++) {
@@ -184,6 +200,19 @@ class NestedAggregator extends BucketsAggregator implements SingleBucketAggregat
                 }
             }
             bucketBuffer.clear();
+        }
+    }
+
+    private static class CachedScorable extends Scorable {
+        int doc;
+        float score;
+
+        @Override
+        public final float score() { return score; }
+
+        @Override
+        public int docID() {
+            return doc;
         }
 
     }

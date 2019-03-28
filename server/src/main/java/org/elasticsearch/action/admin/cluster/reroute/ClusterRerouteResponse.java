@@ -24,13 +24,16 @@ import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.routing.allocation.RoutingExplanations;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.xcontent.ToXContent;
+import org.elasticsearch.common.xcontent.ToXContentObject;
+import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
 
 /**
  * Response returned after a cluster reroute request
  */
-public class ClusterRerouteResponse extends AcknowledgedResponse {
+public class ClusterRerouteResponse extends AcknowledgedResponse implements ToXContentObject {
 
     private ClusterState state;
     private RoutingExplanations explanations;
@@ -60,7 +63,6 @@ public class ClusterRerouteResponse extends AcknowledgedResponse {
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         state = ClusterState.readFrom(in, null);
-        readAcknowledged(in);
         explanations = RoutingExplanations.readFrom(in);
     }
 
@@ -68,7 +70,16 @@ public class ClusterRerouteResponse extends AcknowledgedResponse {
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         state.writeTo(out);
-        writeAcknowledged(out);
         RoutingExplanations.writeTo(explanations, out);
+    }
+
+    @Override
+    protected void addCustomFields(XContentBuilder builder, Params params) throws IOException {
+        builder.startObject("state");
+        state.toXContent(builder, params);
+        builder.endObject();
+        if (params.paramAsBoolean("explain", false)) {
+            explanations.toXContent(builder, ToXContent.EMPTY_PARAMS);
+        }
     }
 }

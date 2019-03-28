@@ -21,15 +21,16 @@ package org.elasticsearch.action.support.replication;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.store.AlreadyClosedException;
-import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.UnavailableShardsException;
 import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.action.support.replication.ReplicationResponse.ShardInfo;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.action.shard.ShardStateAction;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.IndexShardRoutingTable;
 import org.elasticsearch.cluster.routing.ShardRouting;
@@ -40,7 +41,10 @@ import org.elasticsearch.index.shard.IndexShardNotStartedException;
 import org.elasticsearch.index.shard.IndexShardState;
 import org.elasticsearch.index.shard.ReplicationGroup;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.node.NodeClosedException;
 import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.transport.SendRequestTransportException;
+import org.elasticsearch.transport.TransportException;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -52,9 +56,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 import static org.elasticsearch.action.support.replication.ClusterStateCreationUtils.state;
 import static org.elasticsearch.action.support.replication.ClusterStateCreationUtils.stateWithActivePrimary;
@@ -95,43 +97,39 @@ public class ReplicationOperationTests extends ESTestCase {
 
         final Set<ShardRouting> expectedReplicas = getExpectedReplicas(shardId, initialState, trackedShards);
 
-        final Map<ShardRouting, Exception> expectedFailures = new HashMap<>();
-        final Set<ShardRouting> expectedFailedShards = new HashSet<>();
+        final Map<ShardRouting, Exception> simulatedFailures = new HashMap<>();
+        final Map<ShardRouting, Exception> reportedFailures = new HashMap<>();
         for (ShardRouting replica : expectedReplicas) {
             if (randomBoolean()) {
                 Exception t;
                 boolean criticalFailure = randomBoolean();
                 if (criticalFailure) {
                     t = new CorruptIndexException("simulated", (String) null);
+                    reportedFailures.put(replica, t);
                 } else {
                     t = new IndexShardNotStartedException(shardId, IndexShardState.RECOVERING);
                 }
                 logger.debug("--> simulating failure on {} with [{}]", replica, t.getClass().getSimpleName());
-                expectedFailures.put(replica, t);
-                if (criticalFailure) {
-                    expectedFailedShards.add(replica);
-                }
+                simulatedFailures.put(replica, t);
             }
         }
 
         Request request = new Request(shardId);
         PlainActionFuture<TestPrimary.Result> listener = new PlainActionFuture<>();
-        final TestReplicaProxy replicasProxy = new TestReplicaProxy(primaryTerm, expectedFailures);
+        final TestReplicaProxy replicasProxy = new TestReplicaProxy(primaryTerm, simulatedFailures);
 
         final TestPrimary primary = new TestPrimary(primaryShard, () -> replicationGroup);
-        final TestReplicationOperation op = new TestReplicationOperation(request,
-            primary, listener, replicasProxy);
+        final TestReplicationOperation op = new TestReplicationOperation(request, primary, listener, replicasProxy);
         op.execute();
-
         assertThat("request was not processed on primary", request.processedOnPrimary.get(), equalTo(true));
         assertThat(request.processedOnReplicas, equalTo(expectedReplicas));
-        assertThat(replicasProxy.failedReplicas, equalTo(expectedFailedShards));
+        assertThat(replicasProxy.failedReplicas, equalTo(simulatedFailures.keySet()));
         assertThat(replicasProxy.markedAsStaleCopies, equalTo(staleAllocationIds));
         assertTrue("listener is not marked as done", listener.isDone());
         ShardInfo shardInfo = listener.actionGet().getShardInfo();
-        assertThat(shardInfo.getFailed(), equalTo(expectedFailedShards.size()));
-        assertThat(shardInfo.getFailures(), arrayWithSize(expectedFailedShards.size()));
-        assertThat(shardInfo.getSuccessful(), equalTo(1 + expectedReplicas.size() - expectedFailures.size()));
+        assertThat(shardInfo.getFailed(), equalTo(reportedFailures.size()));
+        assertThat(shardInfo.getFailures(), arrayWithSize(reportedFailures.size()));
+        assertThat(shardInfo.getSuccessful(), equalTo(1 + expectedReplicas.size() - simulatedFailures.size()));
         final List<ShardRouting> unassignedShards =
             indexShardRoutingTable.shardsWithState(ShardRoutingState.UNASSIGNED);
         final int totalShards = 1 + expectedReplicas.size() + unassignedShards.size() + untrackedShards.size();
@@ -166,7 +164,7 @@ public class ReplicationOperationTests extends ESTestCase {
         }
     }
 
-    public void testDemotedPrimary() throws Exception {
+    public void testNoLongerPrimary() throws Exception {
         final String index = "test";
         final ShardId shardId = new ShardId(index, "_na_", 0);
 
@@ -202,26 +200,37 @@ public class ReplicationOperationTests extends ESTestCase {
         Request request = new Request(shardId);
         PlainActionFuture<TestPrimary.Result> listener = new PlainActionFuture<>();
         final boolean testPrimaryDemotedOnStaleShardCopies = randomBoolean();
+        final Exception shardActionFailure;
+        if (randomBoolean()) {
+            shardActionFailure = new NodeClosedException(new DiscoveryNode("foo", buildNewFakeTransportAddress(), Version.CURRENT));
+        } else if (randomBoolean()) {
+            shardActionFailure = new SendRequestTransportException(
+                new DiscoveryNode("foo", buildNewFakeTransportAddress(), Version.CURRENT), ShardStateAction.SHARD_FAILED_ACTION_NAME,
+                new TransportException("TransportService is closed stopped can't send request"));
+        } else if (randomBoolean()) {
+            shardActionFailure = new TransportException(
+                "transport stopped, action: " + ShardStateAction.SHARD_FAILED_ACTION_NAME);
+        } else {
+            shardActionFailure = new ShardStateAction.NoLongerPrimaryShardException(failedReplica.shardId(), "the king is dead");
+        }
         final TestReplicaProxy replicasProxy = new TestReplicaProxy(primaryTerm, expectedFailures) {
             @Override
             public void failShardIfNeeded(ShardRouting replica, String message, Exception exception,
-                                          Runnable onSuccess, Consumer<Exception> onPrimaryDemoted,
-                                          Consumer<Exception> onIgnoredFailure) {
+                                          ActionListener<Void> shardActionListener) {
                 if (testPrimaryDemotedOnStaleShardCopies) {
-                    super.failShardIfNeeded(replica, message, exception, onSuccess, onPrimaryDemoted, onIgnoredFailure);
+                    super.failShardIfNeeded(replica, message, exception, shardActionListener);
                 } else {
                     assertThat(replica, equalTo(failedReplica));
-                    onPrimaryDemoted.accept(new ElasticsearchException("the king is dead"));
+                    shardActionListener.onFailure(shardActionFailure);
                 }
             }
 
             @Override
-            public void markShardCopyAsStaleIfNeeded(ShardId shardId, String allocationId, Runnable onSuccess,
-                                                     Consumer<Exception> onPrimaryDemoted, Consumer<Exception> onIgnoredFailure) {
+            public void markShardCopyAsStaleIfNeeded(ShardId shardId, String allocationId, ActionListener<Void> shardActionListener) {
                 if (testPrimaryDemotedOnStaleShardCopies) {
-                    onPrimaryDemoted.accept(new ElasticsearchException("the king is dead"));
+                    shardActionListener.onFailure(shardActionFailure);
                 } else {
-                    super.markShardCopyAsStaleIfNeeded(shardId, allocationId, onSuccess, onPrimaryDemoted, onIgnoredFailure);
+                    super.markShardCopyAsStaleIfNeeded(shardId, allocationId, shardActionListener);
                 }
             }
         };
@@ -229,6 +238,7 @@ public class ReplicationOperationTests extends ESTestCase {
         final TestPrimary primary = new TestPrimary(primaryShard, () -> replicationGroup) {
             @Override
             public void failShard(String message, Exception exception) {
+                assertThat(exception, instanceOf(ShardStateAction.NoLongerPrimaryShardException.class));
                 assertTrue(primaryFailed.compareAndSet(false, true));
             }
         };
@@ -237,7 +247,11 @@ public class ReplicationOperationTests extends ESTestCase {
 
         assertThat("request was not processed on primary", request.processedOnPrimary.get(), equalTo(true));
         assertTrue("listener is not marked as done", listener.isDone());
-        assertTrue(primaryFailed.get());
+        if (shardActionFailure instanceof ShardStateAction.NoLongerPrimaryShardException) {
+            assertTrue(primaryFailed.get());
+        } else {
+            assertFalse(primaryFailed.get());
+        }
         assertListenerThrows("should throw exception to trigger retry", listener,
             ReplicationOperation.RetryOnPrimaryException.class);
     }
@@ -447,6 +461,7 @@ public class ReplicationOperationTests extends ESTestCase {
         final ShardRouting routing;
         final long localCheckpoint;
         final long globalCheckpoint;
+        final long maxSeqNoOfUpdatesOrDeletes;
         final Supplier<ReplicationGroup> replicationGroupSupplier;
         final Map<String, Long> knownLocalCheckpoints = new HashMap<>();
         final Map<String, Long> knownGlobalCheckpoints = new HashMap<>();
@@ -456,6 +471,7 @@ public class ReplicationOperationTests extends ESTestCase {
             this.replicationGroupSupplier = replicationGroupSupplier;
             this.localCheckpoint = random().nextLong();
             this.globalCheckpoint = randomNonNegativeLong();
+            this.maxSeqNoOfUpdatesOrDeletes = randomNonNegativeLong();
         }
 
         @Override
@@ -520,6 +536,11 @@ public class ReplicationOperationTests extends ESTestCase {
         }
 
         @Override
+        public long maxSeqNoOfUpdatesOrDeletes() {
+            return maxSeqNoOfUpdatesOrDeletes;
+        }
+
+        @Override
         public ReplicationGroup getReplicationGroup() {
             return replicationGroupSupplier.get();
         }
@@ -575,6 +596,7 @@ public class ReplicationOperationTests extends ESTestCase {
                 final ShardRouting replica,
                 final Request request,
                 final long globalCheckpoint,
+                final long maxSeqNoOfUpdatesOrDeletes,
                 final ActionListener<ReplicationOperation.ReplicaResponse> listener) {
             assertTrue("replica request processed twice on [" + replica + "]", request.processedOnReplicas.add(replica));
             if (opFailures.containsKey(replica)) {
@@ -590,33 +612,23 @@ public class ReplicationOperationTests extends ESTestCase {
         }
 
         @Override
-        public void failShardIfNeeded(ShardRouting replica, String message, Exception exception, Runnable onSuccess,
-                                      Consumer<Exception> onPrimaryDemoted, Consumer<Exception> onIgnoredFailure) {
+        public void failShardIfNeeded(ShardRouting replica, String message, Exception exception, ActionListener<Void> listener) {
             if (failedReplicas.add(replica) == false) {
                 fail("replica [" + replica + "] was failed twice");
             }
             if (opFailures.containsKey(replica)) {
-                if (randomBoolean()) {
-                    onSuccess.run();
-                } else {
-                    onIgnoredFailure.accept(new ElasticsearchException("simulated"));
-                }
+                listener.onResponse(null);
             } else {
                 fail("replica [" + replica + "] was failed");
             }
         }
 
         @Override
-        public void markShardCopyAsStaleIfNeeded(ShardId shardId, String allocationId, Runnable onSuccess,
-                                                 Consumer<Exception> onPrimaryDemoted, Consumer<Exception> onIgnoredFailure) {
+        public void markShardCopyAsStaleIfNeeded(ShardId shardId, String allocationId, ActionListener<Void> listener) {
             if (markedAsStaleCopies.add(allocationId) == false) {
                 fail("replica [" + allocationId + "] was marked as stale twice");
             }
-            if (randomBoolean()) {
-                onSuccess.run();
-            } else {
-                onIgnoredFailure.accept(new ElasticsearchException("simulated"));
-            }
+            listener.onResponse(null);
         }
     }
 

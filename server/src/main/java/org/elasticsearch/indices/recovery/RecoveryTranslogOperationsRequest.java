@@ -21,6 +21,7 @@ package org.elasticsearch.indices.recovery;
 
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.index.seqno.RetentionLeases;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.transport.TransportRequest;
@@ -34,15 +35,28 @@ public class RecoveryTranslogOperationsRequest extends TransportRequest {
     private ShardId shardId;
     private List<Translog.Operation> operations;
     private int totalTranslogOps = RecoveryState.Translog.UNKNOWN;
+    private long maxSeenAutoIdTimestampOnPrimary;
+    private long maxSeqNoOfUpdatesOrDeletesOnPrimary;
+    private RetentionLeases retentionLeases;
 
     public RecoveryTranslogOperationsRequest() {
     }
 
-    RecoveryTranslogOperationsRequest(long recoveryId, ShardId shardId, List<Translog.Operation> operations, int totalTranslogOps) {
+    RecoveryTranslogOperationsRequest(
+            final long recoveryId,
+            final ShardId shardId,
+            final List<Translog.Operation> operations,
+            final int totalTranslogOps,
+            final long maxSeenAutoIdTimestampOnPrimary,
+            final long maxSeqNoOfUpdatesOrDeletesOnPrimary,
+            final RetentionLeases retentionLeases) {
         this.recoveryId = recoveryId;
         this.shardId = shardId;
         this.operations = operations;
         this.totalTranslogOps = totalTranslogOps;
+        this.maxSeenAutoIdTimestampOnPrimary = maxSeenAutoIdTimestampOnPrimary;
+        this.maxSeqNoOfUpdatesOrDeletesOnPrimary = maxSeqNoOfUpdatesOrDeletesOnPrimary;
+        this.retentionLeases = retentionLeases;
     }
 
     public long recoveryId() {
@@ -61,13 +75,28 @@ public class RecoveryTranslogOperationsRequest extends TransportRequest {
         return totalTranslogOps;
     }
 
+    public long maxSeenAutoIdTimestampOnPrimary() {
+        return maxSeenAutoIdTimestampOnPrimary;
+    }
+
+    public long maxSeqNoOfUpdatesOrDeletesOnPrimary() {
+        return maxSeqNoOfUpdatesOrDeletesOnPrimary;
+    }
+
+    public RetentionLeases retentionLeases() {
+        return retentionLeases;
+    }
+
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         recoveryId = in.readLong();
         shardId = ShardId.readShardId(in);
-        operations = Translog.readOperations(in);
+        operations = Translog.readOperations(in, "recovery");
         totalTranslogOps = in.readVInt();
+        maxSeenAutoIdTimestampOnPrimary = in.readZLong();
+        maxSeqNoOfUpdatesOrDeletesOnPrimary = in.readZLong();
+        retentionLeases = new RetentionLeases(in);
     }
 
     @Override
@@ -77,5 +106,8 @@ public class RecoveryTranslogOperationsRequest extends TransportRequest {
         shardId.writeTo(out);
         Translog.writeOperations(out, operations);
         out.writeVInt(totalTranslogOps);
+        out.writeZLong(maxSeenAutoIdTimestampOnPrimary);
+        out.writeZLong(maxSeqNoOfUpdatesOrDeletesOnPrimary);
+        retentionLeases.writeTo(out);
     }
 }

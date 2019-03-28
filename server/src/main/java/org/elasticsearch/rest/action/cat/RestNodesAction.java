@@ -123,6 +123,8 @@ public class RestNodesAction extends AbstractCatAction {
         table.addCell("http_address", "default:false;alias:http;desc:bound http address");
 
         table.addCell("version", "default:false;alias:v;desc:es version");
+        table.addCell("flavor", "default:false;alias:f;desc:es distribution flavor");
+        table.addCell("type", "default:false;alias:t;desc:es distribution type");
         table.addCell("build", "default:false;alias:b;desc:es build hash");
         table.addCell("jdk", "default:false;alias:j;desc:jdk version");
         table.addCell("disk.total", "default:false;alias:dt,diskTotal;text-align:right;desc:total disk space");
@@ -199,6 +201,9 @@ public class RestNodesAction extends AbstractCatAction {
 
         table.addCell("refresh.total", "alias:rto,refreshTotal;default:false;text-align:right;desc:total refreshes");
         table.addCell("refresh.time", "alias:rti,refreshTime;default:false;text-align:right;desc:time spent in refreshes");
+        table.addCell("refresh.external_total", "alias:rto,refreshTotal;default:false;text-align:right;desc:total external refreshes");
+        table.addCell("refresh.external_time",
+            "alias:rti,refreshTime;default:false;text-align:right;desc:time spent in external refreshes");
         table.addCell("refresh.listeners", "alias:rli,refreshListeners;default:false;text-align:right;"
                 + "desc:number of pending refresh listeners");
 
@@ -238,7 +243,7 @@ public class RestNodesAction extends AbstractCatAction {
         return table;
     }
 
-    private Table buildTable(boolean fullId, RestRequest req, ClusterStateResponse state, NodesInfoResponse nodesInfo,
+    Table buildTable(boolean fullId, RestRequest req, ClusterStateResponse state, NodesInfoResponse nodesInfo,
                              NodesStatsResponse nodesStats) {
 
         DiscoveryNodes nodes = state.getState().nodes();
@@ -271,16 +276,28 @@ public class RestNodesAction extends AbstractCatAction {
             }
 
             table.addCell(node.getVersion().toString());
+            table.addCell(info == null ? null : info.getBuild().flavor().displayName());
+            table.addCell(info == null ? null : info.getBuild().type().displayName());
             table.addCell(info == null ? null : info.getBuild().shortHash());
             table.addCell(jvmInfo == null ? null : jvmInfo.version());
-            
-            long diskTotal = fsInfo.getTotal().getTotal().getBytes();
-            long diskUsed = diskTotal - fsInfo.getTotal().getAvailable().getBytes();
-            double diskUsedRatio = diskTotal == 0 ? 1.0 : (double) diskUsed / diskTotal;
-            table.addCell(fsInfo == null ? null : fsInfo.getTotal().getTotal());
-            table.addCell(fsInfo == null ? null : new ByteSizeValue(diskUsed));
-            table.addCell(fsInfo == null ? null : fsInfo.getTotal().getAvailable());
-            table.addCell(fsInfo == null ? null : String.format(Locale.ROOT, "%.2f", 100.0 * diskUsedRatio));
+
+
+            ByteSizeValue diskTotal = null;
+            ByteSizeValue diskUsed = null;
+            ByteSizeValue diskAvailable = null;
+            String diskUsedPercent = null;
+            if (fsInfo != null) {
+                diskTotal = fsInfo.getTotal().getTotal();
+                diskAvailable = fsInfo.getTotal().getAvailable();
+                diskUsed = new ByteSizeValue(diskTotal.getBytes() - diskAvailable.getBytes());
+
+                double diskUsedRatio = diskTotal.getBytes() == 0 ? 1.0 : (double) diskUsed.getBytes() / diskTotal.getBytes();
+                diskUsedPercent = String.format(Locale.ROOT, "%.2f", 100.0 * diskUsedRatio);
+            }
+            table.addCell(diskTotal);
+            table.addCell(diskUsed);
+            table.addCell(diskAvailable);
+            table.addCell(diskUsedPercent);
             
             table.addCell(jvmStats == null ? null : jvmStats.getMem().getHeapUsed());
             table.addCell(jvmStats == null ? null : jvmStats.getMem().getHeapUsedPercent());
@@ -364,6 +381,8 @@ public class RestNodesAction extends AbstractCatAction {
             RefreshStats refreshStats = indicesStats == null ? null : indicesStats.getRefresh();
             table.addCell(refreshStats == null ? null : refreshStats.getTotal());
             table.addCell(refreshStats == null ? null : refreshStats.getTotalTime());
+            table.addCell(refreshStats == null ? null : refreshStats.getExternalTotal());
+            table.addCell(refreshStats == null ? null : refreshStats.getExternalTotalTime());
             table.addCell(refreshStats == null ? null : refreshStats.getListeners());
 
             ScriptStats scriptStats = stats == null ? null : stats.getScriptStats();

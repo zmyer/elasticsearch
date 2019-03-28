@@ -50,8 +50,8 @@ public class Index implements Writeable, ToXContentObject {
     private final String uuid;
 
     public Index(String name, String uuid) {
-        this.name = Objects.requireNonNull(name).intern();
-        this.uuid = Objects.requireNonNull(uuid).intern();
+        this.name = Objects.requireNonNull(name);
+        this.uuid = Objects.requireNonNull(uuid);
     }
 
     /**
@@ -87,7 +87,7 @@ public class Index implements Writeable, ToXContentObject {
         if (this == o) {
             return true;
         }
-        if (o == null) {
+        if (o == null || getClass() != o.getClass()) {
             return false;
         }
         Index index1 = (Index) o;

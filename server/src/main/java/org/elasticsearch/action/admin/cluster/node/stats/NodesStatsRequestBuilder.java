@@ -23,7 +23,8 @@ import org.elasticsearch.action.admin.indices.stats.CommonStatsFlags;
 import org.elasticsearch.action.support.nodes.NodesOperationRequestBuilder;
 import org.elasticsearch.client.ElasticsearchClient;
 
-public class NodesStatsRequestBuilder extends NodesOperationRequestBuilder<NodesStatsRequest, NodesStatsResponse, NodesStatsRequestBuilder> {
+public class NodesStatsRequestBuilder
+        extends NodesOperationRequestBuilder<NodesStatsRequest, NodesStatsResponse, NodesStatsRequestBuilder> {
 
     public NodesStatsRequestBuilder(ElasticsearchClient client, NodesStatsAction action) {
         super(client, action, new NodesStatsRequest());
@@ -138,8 +139,14 @@ public class NodesStatsRequestBuilder extends NodesOperationRequestBuilder<Nodes
     /**
      * Should ingest statistics be returned.
      */
-    public NodesStatsRequestBuilder ingest(boolean ingest) {
+    public NodesStatsRequestBuilder setIngest(boolean ingest) {
         request.ingest(ingest);
         return this;
     }
+
+    public NodesStatsRequestBuilder setAdaptiveSelection(boolean adaptiveSelection) {
+        request.adaptiveSelection(adaptiveSelection);
+        return this;
+    }
+
 }

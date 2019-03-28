@@ -23,6 +23,7 @@ import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -142,10 +143,13 @@ public class CollectorResult implements ToXContentObject, Writeable {
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, ToXContent.Params params) throws IOException {
-        builder = builder.startObject()
-                .field(NAME.getPreferredName(), getName())
-                .field(REASON.getPreferredName(), getReason())
-                .timeValueField(TIME_NANOS.getPreferredName(), TIME.getPreferredName(), getTime(), TimeUnit.NANOSECONDS);
+        builder = builder.startObject();
+        builder.field(NAME.getPreferredName(), getName());
+        builder.field(REASON.getPreferredName(), getReason());
+        if (builder.humanReadable()) {
+            builder.field(TIME.getPreferredName(), new TimeValue(getTime(), TimeUnit.NANOSECONDS).toString());
+        }
+        builder.field(TIME_NANOS.getPreferredName(), getTime());
 
         if (!children.isEmpty()) {
             builder = builder.startArray(CHILDREN.getPreferredName());
@@ -169,20 +173,20 @@ public class CollectorResult implements ToXContentObject, Writeable {
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else if (token.isValue()) {
-                if (NAME.match(currentFieldName)) {
+                if (NAME.match(currentFieldName, parser.getDeprecationHandler())) {
                     name = parser.text();
-                } else if (REASON.match(currentFieldName)) {
+                } else if (REASON.match(currentFieldName, parser.getDeprecationHandler())) {
                     reason = parser.text();
-                } else if (TIME.match(currentFieldName)) {
+                } else if (TIME.match(currentFieldName, parser.getDeprecationHandler())) {
                     // we need to consume this value, but we use the raw nanosecond value
                     parser.text();
-                } else if (TIME_NANOS.match(currentFieldName)) {
+                } else if (TIME_NANOS.match(currentFieldName, parser.getDeprecationHandler())) {
                     time = parser.longValue();
                 } else {
                     parser.skipChildren();
                 }
             } else if (token == XContentParser.Token.START_ARRAY) {
-                if (CHILDREN.match(currentFieldName)) {
+                if (CHILDREN.match(currentFieldName, parser.getDeprecationHandler())) {
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                         children.add(CollectorResult.fromXContent(parser));
                     }

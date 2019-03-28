@@ -22,9 +22,7 @@ package org.elasticsearch.cluster.metadata;
 import org.elasticsearch.action.admin.indices.alias.Alias;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.component.AbstractComponent;
-import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentHelper;
@@ -43,20 +41,14 @@ import static org.elasticsearch.index.query.AbstractQueryBuilder.parseInnerQuery
  * Validator for an alias, to be used before adding an alias to the index metadata
  * and make sure the alias is valid
  */
-public class AliasValidator extends AbstractComponent {
-
-    @Inject
-    public AliasValidator(Settings settings) {
-        super(settings);
-    }
-
+public class AliasValidator {
     /**
      * Allows to validate an {@link org.elasticsearch.action.admin.indices.alias.Alias} and make sure
      * it's valid before it gets added to the index metadata. Doesn't validate the alias filter.
      * @throws IllegalArgumentException if the alias is not valid
      */
     public void validateAlias(Alias alias, String index, MetaData metaData) {
-        validateAlias(alias.name(), index, alias.indexRouting(), name -> metaData.index(name));
+        validateAlias(alias.name(), index, alias.indexRouting(), metaData::index);
     }
 
     /**
@@ -65,7 +57,7 @@ public class AliasValidator extends AbstractComponent {
      * @throws IllegalArgumentException if the alias is not valid
      */
     public void validateAliasMetaData(AliasMetaData aliasMetaData, String index, MetaData metaData) {
-        validateAlias(aliasMetaData.alias(), index, aliasMetaData.indexRouting(), name -> metaData.index(name));
+        validateAlias(aliasMetaData.alias(), index, aliasMetaData.indexRouting(), metaData::index);
     }
 
     /**
@@ -120,7 +112,8 @@ public class AliasValidator extends AbstractComponent {
     public void validateAliasFilter(String alias, String filter, QueryShardContext queryShardContext,
             NamedXContentRegistry xContentRegistry) {
         assert queryShardContext != null;
-        try (XContentParser parser = XContentFactory.xContent(filter).createParser(xContentRegistry, filter)) {
+        try (XContentParser parser = XContentFactory.xContent(filter)
+            .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, filter)) {
             validateAliasFilter(parser, queryShardContext);
         } catch (Exception e) {
             throw new IllegalArgumentException("failed to parse filter for alias [" + alias + "]", e);
@@ -135,7 +128,8 @@ public class AliasValidator extends AbstractComponent {
     public void validateAliasFilter(String alias, byte[] filter, QueryShardContext queryShardContext,
             NamedXContentRegistry xContentRegistry) {
         assert queryShardContext != null;
-        try (XContentParser parser = XContentFactory.xContent(filter).createParser(xContentRegistry, filter)) {
+        try (XContentParser parser = XContentFactory.xContent(filter)
+                .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, filter)) {
             validateAliasFilter(parser, queryShardContext);
         } catch (Exception e) {
             throw new IllegalArgumentException("failed to parse filter for alias [" + alias + "]", e);
@@ -145,6 +139,6 @@ public class AliasValidator extends AbstractComponent {
     private static void validateAliasFilter(XContentParser parser, QueryShardContext queryShardContext) throws IOException {
         QueryBuilder parseInnerQueryBuilder = parseInnerQueryBuilder(parser);
         QueryBuilder queryBuilder = Rewriteable.rewrite(parseInnerQueryBuilder, queryShardContext, true);
-        queryBuilder.toFilter(queryShardContext);
+        queryBuilder.toQuery(queryShardContext);
     }
 }
